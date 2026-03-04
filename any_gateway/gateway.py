@@ -84,7 +84,7 @@ async def lifespan(app: FastAPI):
                         task.cancel()
                     try:
                         await asyncio.wait(pending, timeout=2.0)
-                    except:
+                    except Exception:
                         pass
 
             except asyncio.TimeoutError:
@@ -93,7 +93,7 @@ async def lifespan(app: FastAPI):
                     task.cancel()
                 try:
                     await asyncio.gather(*consumer_tasks, return_exceptions=True)
-                except:
+                except Exception:
                     pass
             except Exception as e:
                 logger.error(f"关闭日志消费者时出错: {e}")
@@ -287,7 +287,7 @@ async def forward_streaming_request(
 
             # fire-and-forget 更新用量
             # TODO: 流式响应中解析 usage 较复杂，暂时记录 0 token，后续实现
-            asyncio.create_task(
+            usage_task = asyncio.create_task(
                 update_usage(
                     token_id=getattr(request.state, "token_id", None),
                     channel_id=None,
@@ -300,6 +300,8 @@ async def forward_streaming_request(
                     is_stream=True,
                 )
             )
+            app.state.log_tasks.add(usage_task)
+            usage_task.add_done_callback(app.state.log_tasks.discard)
 
     # 返回流式响应
     return StreamingResponse(
@@ -359,7 +361,7 @@ async def forward_request(
             body_json = json.loads(body)
             model_name = body_json.get("model")
             is_stream_request = body_json.get("stream", False)
-    except:
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         pass
 
     # 如果请求要求流式，使用流式转发
@@ -434,7 +436,7 @@ async def forward_request(
             logger.info(f"当前task数量: {len(app.state.log_tasks)}")
 
             # fire-and-forget 更新用量（不阻塞响应）
-            asyncio.create_task(
+            usage_task = asyncio.create_task(
                 update_usage(
                     token_id=getattr(request.state, "token_id", None),
                     channel_id=None,
@@ -447,6 +449,8 @@ async def forward_request(
                     is_stream=False,
                 )
             )
+            request.app.state.log_tasks.add(usage_task)
+            usage_task.add_done_callback(request.app.state.log_tasks.discard)
 
             # 直接返回后端的响应状态码和内容
             return Response(
@@ -581,7 +585,7 @@ async def refresh_models(request: Request):
     try:
         body = await request.json()
         group_name_filter = body.get("group_name")
-    except:
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         pass  # 如果没有请求体或解析失败,忽略
 
     if not config:

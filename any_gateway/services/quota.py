@@ -2,10 +2,11 @@
 额度检查与用量更新服务。
 
 - check_quota: 纯逻辑，判断 token 是否在额度内
-- update_usage: 原子更新 Token.used_usd + 插入 UsageLog，fire-and-forget 调用
+- update_usage: 更新 Token.used_usd + 插入 UsageLog，fire-and-forget 调用
 """
 from __future__ import annotations
 
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastcrud import FastCRUD
 from loguru import logger
@@ -17,12 +18,12 @@ from db.models import Token, UsageLog
 def check_quota(quota_usd: float, used_usd: float) -> bool:
     """
     判断 token 是否在额度内。
-    quota_usd == 0 表示无限额度，始终返回 True。
+    quota_usd <= 0 表示无限额度，始终返回 True。
     否则返回 used_usd < quota_usd。
 
     注意：此函数为纯逻辑，无 I/O，设计为同步函数。
     """
-    if quota_usd == 0:
+    if quota_usd <= 0:
         return True
     return used_usd < quota_usd
 
@@ -39,7 +40,7 @@ async def update_usage(
     is_stream: bool,
 ) -> None:
     """
-    1. 原子递增 Token.used_usd（通过 FastCRUD.update）
+    1. 递增 Token.used_usd（通过 SQL 级原子 UPDATE）
     2. 插入一条 UsageLog 记录
 
     此函数应通过 asyncio.create_task() 以 fire-and-forget 方式调用，
@@ -49,13 +50,12 @@ async def update_usage(
     """
     try:
         async with AsyncSession(engine, expire_on_commit=False) as session:
-            # 1. 原子递增 Token.used_usd
+            # 1. 原子递增 Token.used_usd（SQL 级 UPDATE，避免 read-modify-write 竞态）
             if token_id:
-                crud = FastCRUD(Token)
-                token = await crud.get(session, id=token_id)
-                if token:
-                    new_used = token.get("used_usd", 0) + cost_usd
-                    await crud.update(session, {"used_usd": new_used}, id=token_id)
+                stmt = sa_update(Token).where(Token.id == token_id).values(
+                    used_usd=Token.used_usd + cost_usd
+                )
+                await session.execute(stmt)
 
             # 2. 插入 UsageLog 记录
             log = UsageLog(
@@ -74,4 +74,4 @@ async def update_usage(
 
     except Exception as exc:  # pylint: disable=broad-except
         # 用量记录失败不应影响请求结果，仅记录错误日志
-        logger.error(f"update_usage 失败 (token_id={token_id}): {exc}")
+        logger.exception(f"update_usage 失败 (token_id={token_id})")
