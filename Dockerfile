@@ -19,4 +19,7 @@ EXPOSE 8002 8502
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:8002/health || exit 1
 
+RUN addgroup --system appuser && adduser --system --ingroup appuser appuser
+USER appuser
+
 CMD ["python", "any_gateway/main.py"]
