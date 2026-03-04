@@ -75,6 +75,38 @@ class LDAPAuthService:
             logger.warning(f"LDAP auth failed for {safe_user}: {e}")
             return False
 
+    def get_user_groups(self, username: str, bind_user: str, bind_pwd: str) -> list[str]:
+        """查询用户所属 AD 组（可选，用于权限映射）
+
+        Args:
+            username:  要查询的登录名（不含域前缀）。
+            bind_user: 用于搜索的服务账号 DN 或 ``DOMAIN\\user``。
+            bind_pwd:  服务账号密码。
+
+        Returns:
+            用户所属 AD 组的 DN 字符串列表；查询失败时返回空列表。
+        """
+        safe_user = escape_rdn(username)
+        try:
+            conn = Connection(
+                self.server,
+                user=bind_user,
+                password=bind_pwd,
+                client_strategy=SAFE_SYNC,
+                auto_bind=True,
+            )
+            conn.search(
+                search_base=self.base_dn,
+                search_filter=f"(sAMAccountName={safe_user})",
+                attributes=["memberOf"],
+            )
+            if conn.entries:
+                return [str(g) for g in conn.entries[0].memberOf]
+            return []
+        except Exception as e:
+            logger.warning(f"get_user_groups failed for {safe_user}: {e}")
+            return []
+
 
 # ---------------------------------------------------------------------------
 # 模块级单例：仅在所有环境变量均已设置时创建

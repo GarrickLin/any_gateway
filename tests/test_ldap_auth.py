@@ -150,3 +150,74 @@ def test_authenticate_fallback_key_wrong():
         result = service.authenticate("_admin_fallback", "wrong_key")
 
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# 测试：get_user_groups 返回用户所属 AD 组列表
+# ---------------------------------------------------------------------------
+
+def test_get_user_groups_returns_list():
+    """get_user_groups returns list of group strings"""
+    env = {
+        "LDAP_SERVER_URL": "ldap://fake-dc.test",
+        "LDAP_BASE_DN": "DC=test,DC=local",
+        "LDAP_DOMAIN": "TEST",
+    }
+    mod = _reload_ldap_auth(env)
+    service = mod.ldap_service
+    assert service is not None
+
+    # 模拟 conn.entries 中包含 memberOf 属性的条目
+    mock_entry = MagicMock()
+    mock_entry.memberOf = [
+        "CN=GroupA,DC=test,DC=local",
+        "CN=GroupB,DC=test,DC=local",
+    ]
+    mock_conn = MagicMock()
+    mock_conn.entries = [mock_entry]
+
+    with patch("services.ldap_auth.Connection", return_value=mock_conn):
+        groups = service.get_user_groups("alice", "TEST\\svc_acct", "svc_pwd")
+
+    assert isinstance(groups, list)
+    assert groups == [
+        "CN=GroupA,DC=test,DC=local",
+        "CN=GroupB,DC=test,DC=local",
+    ]
+
+
+def test_get_user_groups_returns_empty_when_no_entries():
+    """get_user_groups returns [] when the user is not found in LDAP"""
+    env = {
+        "LDAP_SERVER_URL": "ldap://fake-dc.test",
+        "LDAP_BASE_DN": "DC=test,DC=local",
+        "LDAP_DOMAIN": "TEST",
+    }
+    mod = _reload_ldap_auth(env)
+    service = mod.ldap_service
+    assert service is not None
+
+    mock_conn = MagicMock()
+    mock_conn.entries = []  # 没有匹配条目
+
+    with patch("services.ldap_auth.Connection", return_value=mock_conn):
+        groups = service.get_user_groups("ghost", "TEST\\svc_acct", "svc_pwd")
+
+    assert groups == []
+
+
+def test_get_user_groups_returns_empty_on_connection_error():
+    """get_user_groups returns [] gracefully when Connection raises an exception"""
+    env = {
+        "LDAP_SERVER_URL": "ldap://fake-dc.test",
+        "LDAP_BASE_DN": "DC=test,DC=local",
+        "LDAP_DOMAIN": "TEST",
+    }
+    mod = _reload_ldap_auth(env)
+    service = mod.ldap_service
+    assert service is not None
+
+    with patch("services.ldap_auth.Connection", side_effect=Exception("Connection refused")):
+        groups = service.get_user_groups("alice", "TEST\\svc_acct", "svc_pwd")
+
+    assert groups == []
