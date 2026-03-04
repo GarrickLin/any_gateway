@@ -51,7 +51,7 @@ def setup_db():
         async with TEST_ENGINE.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
 
-    asyncio.get_event_loop().run_until_complete(_create())
+    asyncio.run(_create())
 
 
 @pytest.fixture

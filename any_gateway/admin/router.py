@@ -7,11 +7,13 @@ Admin CRUD API 路由。
 """
 
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastcrud import FastCRUD, crud_router
 from loguru import logger
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,12 +35,11 @@ from db.models import (
 # Admin Key 验证依赖
 # ---------------------------------------------------------------------------
 
-ADMIN_KEY: str = os.environ.get("ADMIN_KEY", "")
-
 
 async def verify_admin_key(x_admin_key: str = Header(...)) -> None:
     """校验 x-admin-key header，不匹配则返回 403。"""
-    if not ADMIN_KEY or x_admin_key != ADMIN_KEY:
+    admin_key = os.environ.get("ADMIN_KEY", "")
+    if not admin_key or x_admin_key != admin_key:
         logger.warning("Admin key 校验失败")
         raise HTTPException(status_code=403, detail="Invalid admin key")
 
@@ -108,8 +109,6 @@ admin_router = APIRouter(
 
 # ------ 冻结 / 解冻 Token --------------------------------------------------
 
-from pydantic import BaseModel
-
 
 class FreezeRequest(BaseModel):
     frozen: bool
@@ -117,6 +116,7 @@ class FreezeRequest(BaseModel):
 
 @admin_router.post("/tokens/{token_id}/freeze", summary="冻结 / 解冻 Token")
 @admin_router.patch("/tokens/{token_id}/freeze", summary="冻结 / 解冻 Token")
+# 同时支持 POST 和 PATCH，POST 用于兼容 spec 要求，PATCH 为 REST 语义
 async def freeze_token(
     token_id: str,
     body: FreezeRequest,
@@ -124,30 +124,50 @@ async def freeze_token(
 ) -> dict[str, Any]:
     """将指定 Token 设置为冻结（frozen=True）或解冻（frozen=False）。"""
     crud = FastCRUD(Token)
+    # 先检查 token 是否存在
     token = await crud.get(session, id=token_id)
-    if not token:
+    if token is None:
         raise HTTPException(status_code=404, detail="Token not found")
 
+    # 更新冻结状态
     await crud.update(session, object={"frozen": body.frozen}, id=token_id)
-    # 重新查询以返回最新状态
+    # 返回合并结果，避免第二次 DB 查询
     updated = await crud.get(session, id=token_id)
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to retrieve updated token")
     logger.info(f"Token {token_id} frozen={body.frozen}")
-    return updated  # type: ignore[return-value]
+    return updated
 
 
 # ------ 统计接口 ------------------------------------------------------------
 
-def _today_prefix() -> str:
-    """返回今日日期前缀（ISO 8601，用于 LIKE 查询）。"""
-    from datetime import date
 
-    return date.today().isoformat()  # e.g. "2026-03-04"
+class OverviewResponse(BaseModel):
+    total_cost_usd: float
+    request_count: int
+    date: str
+
+
+class TokenStatsItem(BaseModel):
+    token_id: str | None
+    total_cost_usd: float
+    request_count: int
+
+
+class ModelStatsItem(BaseModel):
+    model: str | None
+    request_count: int
+
+
+def _today_prefix() -> str:
+    """返回今日日期前缀（ISO 8601，UTC，用于 LIKE 查询）。"""
+    return datetime.now(timezone.utc).date().isoformat()  # e.g. "2026-03-04"
 
 
 @admin_router.get("/stats/overview", summary="今日整体统计")
 async def stats_overview(
     session: AsyncSession = Depends(async_session_generator),
-) -> dict[str, Any]:
+) -> OverviewResponse:
     """返回今日总费用（USD）和请求数。"""
     today = _today_prefix()
     stmt = select(
@@ -157,17 +177,17 @@ async def stats_overview(
 
     result = await session.execute(stmt)
     row = result.one()
-    return {
-        "total_cost_usd": float(row.total_cost_usd),
-        "request_count": int(row.request_count),
-        "date": today,
-    }
+    return OverviewResponse(
+        total_cost_usd=float(row.total_cost_usd),
+        request_count=int(row.request_count),
+        date=today,
+    )
 
 
 @admin_router.get("/stats/tokens", summary="Top 10 Token 用量")
 async def stats_tokens(
     session: AsyncSession = Depends(async_session_generator),
-) -> list[dict[str, Any]]:
+) -> list[TokenStatsItem]:
     """返回今日费用 Top 10 的 Token（按 cost_usd 降序）。"""
     today = _today_prefix()
     stmt = (
@@ -184,11 +204,11 @@ async def stats_tokens(
     result = await session.execute(stmt)
     rows = result.all()
     return [
-        {
-            "token_id": row.token_id,
-            "total_cost_usd": float(row.total_cost_usd),
-            "request_count": int(row.request_count),
-        }
+        TokenStatsItem(
+            token_id=row.token_id,
+            total_cost_usd=float(row.total_cost_usd),
+            request_count=int(row.request_count),
+        )
         for row in rows
     ]
 
@@ -196,14 +216,13 @@ async def stats_tokens(
 @admin_router.get("/stats/models", summary="Top 10 模型请求量")
 async def stats_models(
     session: AsyncSession = Depends(async_session_generator),
-) -> list[dict[str, Any]]:
+) -> list[ModelStatsItem]:
     """返回今日请求数 Top 10 的模型（按 request_count 降序）。"""
     today = _today_prefix()
     stmt = (
         select(
             UsageLog.model,
             func.count(UsageLog.id).label("request_count"),
-            func.coalesce(func.sum(UsageLog.cost_usd), 0).label("total_cost_usd"),
         )
         .where(UsageLog.created_at.like(f"{today}%"))
         .group_by(UsageLog.model)
@@ -213,10 +232,9 @@ async def stats_models(
     result = await session.execute(stmt)
     rows = result.all()
     return [
-        {
-            "model": row.model,
-            "request_count": int(row.request_count),
-            "total_cost_usd": float(row.total_cost_usd),
-        }
+        ModelStatsItem(
+            model=row.model,
+            request_count=int(row.request_count),
+        )
         for row in rows
     ]
