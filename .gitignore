@@ -10,3 +10,6 @@ micro_gateway
 __pycache__/
 *.pyc
 
+# 环境变量文件（含密钥，切勿提交）
+.env
+

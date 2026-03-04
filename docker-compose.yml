@@ -1,0 +1,23 @@
+services:
+  gateway:
+    build: .
+    ports:
+      - "8002:8002"
+      - "8502:8502"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - ADMIN_KEY=${ADMIN_KEY}
+      - LDAP_SERVER_URL=${LDAP_SERVER_URL:-}
+      - LDAP_BASE_DN=${LDAP_BASE_DN:-}
+      - LDAP_DOMAIN=${LDAP_DOMAIN:-}
+      - ADMIN_FALLBACK_KEY=${ADMIN_FALLBACK_KEY}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+volumes: {}
