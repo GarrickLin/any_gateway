@@ -15,11 +15,24 @@ LDAP/AD 认证服务。
         ok = ldap_service.authenticate(username, password)
 """
 
+import hmac
 import os
 
 from ldap3 import ALL, SAFE_SYNC, Connection, Server
+from ldap3.core.exceptions import LDAPException
+from ldap3.utils.conv import escape_filter_chars
 from ldap3.utils.dn import escape_rdn
 from loguru import logger
+
+
+def check_fallback_key(username: str, password: str) -> bool:
+    """校验 ADMIN_FALLBACK_KEY，ldap_service 为 None 时也可调用。"""
+    if username != "_admin_fallback":
+        return False
+    fallback_key = os.getenv("ADMIN_FALLBACK_KEY")
+    if not fallback_key:
+        return False
+    return hmac.compare_digest(password.encode(), fallback_key.encode())
 
 
 class LDAPAuthService:
@@ -51,8 +64,7 @@ class LDAPAuthService:
         """
         # 1. 应急 fallback：无需 LDAP 连接
         if username == "_admin_fallback":
-            fallback_key = os.getenv("ADMIN_FALLBACK_KEY")
-            if fallback_key and password == fallback_key:
+            if check_fallback_key(username, password):
                 logger.info("管理员通过 ADMIN_FALLBACK_KEY 登录")
                 return True
             logger.warning("ADMIN_FALLBACK_KEY 验证失败")
@@ -71,26 +83,26 @@ class LDAPAuthService:
             )
             conn.unbind()
             return True
-        except Exception as e:
+        except LDAPException as e:
             logger.warning(f"LDAP auth failed for {safe_user}: {e}")
             return False
 
-    def get_user_groups(self, username: str, bind_user: str, bind_pwd: str) -> list[str]:
+    def get_user_groups(self, username: str, service_account_dn: str, bind_pwd: str) -> list[str]:
         """查询用户所属 AD 组（可选，用于权限映射）
 
         Args:
-            username:  要查询的登录名（不含域前缀）。
-            bind_user: 用于搜索的服务账号 DN 或 ``DOMAIN\\user``。
-            bind_pwd:  服务账号密码。
+            username:           要查询的登录名（不含域前缀）。
+            service_account_dn: 用于搜索的服务账号 DN 或 ``DOMAIN\\user``。
+            bind_pwd:           服务账号密码。
 
         Returns:
             用户所属 AD 组的 DN 字符串列表；查询失败时返回空列表。
         """
-        safe_user = escape_rdn(username)
+        safe_user = escape_filter_chars(username)
         try:
             conn = Connection(
                 self.server,
-                user=bind_user,
+                user=service_account_dn,
                 password=bind_pwd,
                 client_strategy=SAFE_SYNC,
                 auto_bind=True,
@@ -100,10 +112,11 @@ class LDAPAuthService:
                 search_filter=f"(sAMAccountName={safe_user})",
                 attributes=["memberOf"],
             )
+            conn.unbind()
             if conn.entries:
                 return [str(g) for g in conn.entries[0].memberOf]
             return []
-        except Exception as e:
+        except LDAPException as e:
             logger.warning(f"get_user_groups failed for {safe_user}: {e}")
             return []
 

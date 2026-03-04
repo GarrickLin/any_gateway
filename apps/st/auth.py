@@ -23,7 +23,7 @@ _AG_PATH = str(Path(__file__).parent.parent.parent / "any_gateway")
 if _AG_PATH not in sys.path:
     sys.path.insert(0, _AG_PATH)
 
-from services.ldap_auth import ldap_service  # noqa: E402
+from services.ldap_auth import check_fallback_key, ldap_service  # noqa: E402
 
 
 def require_admin_login() -> None:
@@ -55,13 +55,7 @@ def require_admin_login() -> None:
             ok = ldap_service.authenticate(username, password)
         else:
             # 无 LDAP 服务时，仅允许 fallback key 登录
-            import os  # noqa: PLC0415
-            fallback_key = os.getenv("ADMIN_FALLBACK_KEY")
-            ok = (
-                username == "_admin_fallback"
-                and bool(fallback_key)
-                and password == fallback_key
-            )
+            ok = check_fallback_key(username, password)
 
         if ok:
             st.session_state.admin_authenticated = True

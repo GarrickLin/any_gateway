@@ -6,7 +6,7 @@ import importlib
 import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -42,12 +42,6 @@ def _reload_ldap_auth(env_vars: dict):
 
 def test_ldap_service_none_when_no_env():
     """当 LDAP_* 环境变量未设置时，ldap_service 应为 None。"""
-    # 临时清除相关环境变量
-    env_patch = {
-        "LDAP_SERVER_URL": "",
-        "LDAP_BASE_DN": "",
-        "LDAP_DOMAIN": "",
-    }
     # 移除已有的变量
     saved = {}
     for k in ("LDAP_SERVER_URL", "LDAP_BASE_DN", "LDAP_DOMAIN"):
@@ -93,6 +87,8 @@ def test_authenticate_success():
 
 def test_authenticate_failure():
     """无效凭据（Connection 抛出异常）→ authenticate() 返回 False。"""
+    from ldap3.core.exceptions import LDAPException
+
     env = {
         "LDAP_SERVER_URL": "ldap://fake-dc.test",
         "LDAP_BASE_DN": "DC=test,DC=local",
@@ -102,7 +98,7 @@ def test_authenticate_failure():
     service = mod.ldap_service
     assert service is not None
 
-    with patch("services.ldap_auth.Connection", side_effect=Exception("Invalid credentials")):
+    with patch("services.ldap_auth.Connection", side_effect=LDAPException("Invalid credentials")):
         result = service.authenticate("alice", "wrong_password")
 
     assert result is False
@@ -208,6 +204,8 @@ def test_get_user_groups_returns_empty_when_no_entries():
 
 def test_get_user_groups_returns_empty_on_connection_error():
     """get_user_groups returns [] gracefully when Connection raises an exception"""
+    from ldap3.core.exceptions import LDAPException
+
     env = {
         "LDAP_SERVER_URL": "ldap://fake-dc.test",
         "LDAP_BASE_DN": "DC=test,DC=local",
@@ -217,7 +215,56 @@ def test_get_user_groups_returns_empty_on_connection_error():
     service = mod.ldap_service
     assert service is not None
 
-    with patch("services.ldap_auth.Connection", side_effect=Exception("Connection refused")):
+    with patch("services.ldap_auth.Connection", side_effect=LDAPException("Connection refused")):
         groups = service.get_user_groups("alice", "TEST\\svc_acct", "svc_pwd")
 
     assert groups == []
+
+
+# ---------------------------------------------------------------------------
+# 测试：m4 — get_user_groups 对恶意用户名使用 escape_filter_chars 进行过滤器转义
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("malicious_username,expected_escaped", [
+    # 星号应被转义为 \2a
+    ("*", "\\2a"),
+    # 注入尝试：特殊字符均应被转义
+    ("alice)(|(objectClass=*)", "alice\\29\\28|\\28objectClass=\\2a\\29"),
+    # 括号注入
+    ("(admin)", "\\28admin\\29"),
+    # 反斜杠应被转义为 \5c
+    ("user\\name", "user\\5cname"),
+    # 正常用户名不变
+    ("alice", "alice"),
+])
+def test_get_user_groups_escapes_filter_chars(malicious_username, expected_escaped):
+    """验证 get_user_groups 使用 escape_filter_chars 对搜索过滤器中的用户名进行转义。
+
+    捕获传递给 conn.search() 的 search_filter 参数，断言其中的用户名已被正确转义。
+    """
+    env = {
+        "LDAP_SERVER_URL": "ldap://fake-dc.test",
+        "LDAP_BASE_DN": "DC=test,DC=local",
+        "LDAP_DOMAIN": "TEST",
+    }
+    mod = _reload_ldap_auth(env)
+    service = mod.ldap_service
+    assert service is not None
+
+    mock_conn = MagicMock()
+    mock_conn.entries = []
+
+    with patch("services.ldap_auth.Connection", return_value=mock_conn):
+        service.get_user_groups(malicious_username, "TEST\\svc_acct", "svc_pwd")
+
+    # 取出 conn.search() 调用时传入的 search_filter 关键字参数
+    mock_conn.search.assert_called_once()
+    _, search_kwargs = mock_conn.search.call_args
+    search_filter = search_kwargs.get("search_filter", "")
+
+    expected_filter = f"(sAMAccountName={expected_escaped})"
+    assert search_filter == expected_filter, (
+        f"用户名 {malicious_username!r} 未正确转义。\n"
+        f"期望: {expected_filter!r}\n"
+        f"实际: {search_filter!r}"
+    )
