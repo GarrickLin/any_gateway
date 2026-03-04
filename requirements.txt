@@ -1,0 +1,11 @@
+loguru
+streamlit
+pydantic
+fastapi
+aiofiles
+aiosqlite
+httpx
+brotli
+ldap3
+sqlmodel
+fastcrud

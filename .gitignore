@@ -1,0 +1,12 @@
+.DS_Store
+.claude/
+venv/
+data/
+docs/prds/
+docs/plans/
+docs/misc/
+micro_gateway
+
+__pycache__/
+*.pyc
+
