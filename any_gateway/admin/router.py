@@ -108,13 +108,6 @@ admin_router = APIRouter(
 
 # ------ 冻结 / 解冻 Token --------------------------------------------------
 
-class FreezeBody:
-    """请求体解析辅助（避免引入额外 Pydantic 模型）。"""
-
-    def __init__(self, frozen: bool):
-        self.frozen = frozen
-
-
 from pydantic import BaseModel
 
 
@@ -122,6 +115,7 @@ class FreezeRequest(BaseModel):
     frozen: bool
 
 
+@admin_router.post("/tokens/{token_id}/freeze", summary="冻结 / 解冻 Token")
 @admin_router.patch("/tokens/{token_id}/freeze", summary="冻结 / 解冻 Token")
 async def freeze_token(
     token_id: str,
