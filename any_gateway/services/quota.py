@@ -1,0 +1,77 @@
+"""
+额度检查与用量更新服务。
+
+- check_quota: 纯逻辑，判断 token 是否在额度内
+- update_usage: 原子更新 Token.used_usd + 插入 UsageLog，fire-and-forget 调用
+"""
+from __future__ import annotations
+
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastcrud import FastCRUD
+from loguru import logger
+
+from db.database import engine
+from db.models import Token, UsageLog
+
+
+def check_quota(quota_usd: float, used_usd: float) -> bool:
+    """
+    判断 token 是否在额度内。
+    quota_usd == 0 表示无限额度，始终返回 True。
+    否则返回 used_usd < quota_usd。
+
+    注意：此函数为纯逻辑，无 I/O，设计为同步函数。
+    """
+    if quota_usd == 0:
+        return True
+    return used_usd < quota_usd
+
+
+async def update_usage(
+    token_id: str | None,
+    channel_id: str | None,
+    model: str | None,
+    input_tokens: int,
+    output_tokens: int,
+    cost_usd: float,
+    duration_ms: float,
+    status: int | None,
+    is_stream: bool,
+) -> None:
+    """
+    1. 原子递增 Token.used_usd（通过 FastCRUD.update）
+    2. 插入一条 UsageLog 记录
+
+    此函数应通过 asyncio.create_task() 以 fire-and-forget 方式调用，
+    内部捕获所有异常，确保用量更新失败不会影响正常请求。
+
+    TODO: 实现真实的价格计算（目前 cost_usd 始终为 0）
+    """
+    try:
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            # 1. 原子递增 Token.used_usd
+            if token_id:
+                crud = FastCRUD(Token)
+                token = await crud.get(session, id=token_id)
+                if token:
+                    new_used = token.get("used_usd", 0) + cost_usd
+                    await crud.update(session, {"used_usd": new_used}, id=token_id)
+
+            # 2. 插入 UsageLog 记录
+            log = UsageLog(
+                token_id=token_id,
+                channel_id=channel_id,
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost_usd,
+                duration_ms=duration_ms,
+                status=status,
+                is_stream=is_stream,
+            )
+            session.add(log)
+            await session.commit()
+
+    except Exception as exc:  # pylint: disable=broad-except
+        # 用量记录失败不应影响请求结果，仅记录错误日志
+        logger.error(f"update_usage 失败 (token_id={token_id}): {exc}")

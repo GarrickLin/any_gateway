@@ -12,6 +12,9 @@ from constants import (
 )
 from loguru import logger
 from urllib.parse import urljoin
+from middleware.auth import AuthMiddleware
+from db.database import init_db
+from services.quota import check_quota, update_usage
 import yaml
 import json
 import time
@@ -25,6 +28,10 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理 - 启动和关闭时的初始化/清理"""
     # 启动时初始化
     logger.info("正在启动应用...")
+
+    # 初始化数据库
+    await init_db()
+    logger.info("数据库初始化完成")
 
     # 初始化日志队列
     log_writer.log_queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
@@ -97,6 +104,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Micro Gateway", lifespan=lifespan)
+# 注意：add_middleware 顺序为 LIFO，AuthMiddleware 最后 add 则最先执行。
+# 未来若增加 CORSMiddleware，需在此行之前 add（使其在 Auth 之后执行）。
+app.add_middleware(AuthMiddleware)
 
 
 def load_config() -> Dict[str, Any]:
@@ -267,12 +277,29 @@ async def forward_streaming_request(
                         "backend_url": backend_url,
                         "is_stream": True,
                         "error": error_message,
+                        "token_id": getattr(request.state, "token_id", None),
                     }
                 )
             )
             app.state.log_tasks.add(task)
             task.add_done_callback(app.state.log_tasks.discard)
             logger.info(f"流式请求日志已入队, 当前task数量: {len(app.state.log_tasks)}")
+
+            # fire-and-forget 更新用量
+            # TODO: 流式响应中解析 usage 较复杂，暂时记录 0 token，后续实现
+            asyncio.create_task(
+                update_usage(
+                    token_id=getattr(request.state, "token_id", None),
+                    channel_id=None,
+                    model=model_name,
+                    input_tokens=0,
+                    output_tokens=0,
+                    cost_usd=0.0,  # TODO: 实现真实定价
+                    duration_ms=duration_ms,
+                    status=response_status or None,
+                    is_stream=True,
+                )
+            )
 
     # 返回流式响应
     return StreamingResponse(
@@ -367,6 +394,19 @@ async def forward_request(
             # 解码响应体用于日志 (失败时使用 replace 策略)
             response_body_log = response_content.decode("utf-8", errors="replace")
 
+            # 从响应体中提取 token 用量（支持 OpenAI 和 Anthropic 格式）
+            input_tokens = 0
+            output_tokens = 0
+            try:
+                resp_json = json.loads(response_content)
+                usage = resp_json.get("usage", {})
+                # OpenAI 格式: prompt_tokens / completion_tokens
+                # Anthropic 格式: input_tokens / output_tokens
+                input_tokens = usage.get("input_tokens") or usage.get("prompt_tokens") or 0
+                output_tokens = usage.get("output_tokens") or usage.get("completion_tokens") or 0
+            except Exception:
+                pass  # 解析失败时保持 0
+
             # 异步记录日志 - 保存任务引用防止被GC回收
             task = asyncio.create_task(
                 log_writer.enqueue_log(
@@ -385,12 +425,28 @@ async def forward_request(
                         "duration_ms": duration_ms,
                         "model_name": model_name,
                         "backend_url": backend_url,
+                        "token_id": getattr(request.state, "token_id", None),
                     }
                 )
             )
             app.state.log_tasks.add(task)
             task.add_done_callback(app.state.log_tasks.discard)
             logger.info(f"当前task数量: {len(app.state.log_tasks)}")
+
+            # fire-and-forget 更新用量（不阻塞响应）
+            asyncio.create_task(
+                update_usage(
+                    token_id=getattr(request.state, "token_id", None),
+                    channel_id=None,
+                    model=model_name,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cost_usd=0.0,  # TODO: 实现真实定价
+                    duration_ms=duration_ms,
+                    status=response.status_code,
+                    is_stream=False,
+                )
+            )
 
             # 直接返回后端的响应状态码和内容
             return Response(
@@ -421,6 +477,7 @@ async def forward_request(
                     "duration_ms": duration_ms,
                     "model_name": model_name,
                     "backend_url": backend_url,
+                    "token_id": getattr(request.state, "token_id", None),
                 }
             )
         )
@@ -450,6 +507,7 @@ async def forward_request(
                     "duration_ms": duration_ms,
                     "model_name": model_name,
                     "backend_url": backend_url,
+                    "token_id": getattr(request.state, "token_id", None),
                 }
             )
         )
@@ -657,6 +715,19 @@ async def gateway(request: Request, path: str):
     """
     网关入口：根据模型名称动态路由到对应的后端服务
     """
+    # 1. 额度检查（在转发前拦截超额请求）
+    quota_usd = getattr(request.state, "quota_usd", 0)
+    used_usd = getattr(request.state, "used_usd", 0)
+    if not check_quota(quota_usd=quota_usd, used_usd=used_usd):
+        logger.warning(
+            f"Token {getattr(request.state, 'token_id', None)} 额度已超出: "
+            f"used={used_usd}, quota={quota_usd}"
+        )
+        return JSONResponse(
+            content={"error": {"type": "quota_exceeded", "message": "Token quota exceeded"}},
+            status_code=402,
+        )
+
     # 读取请求体
     body = await request.json()
 

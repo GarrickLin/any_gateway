@@ -1,0 +1,38 @@
+"""
+额度检查服务单元测试。
+check_quota 为纯逻辑函数，无 I/O，测试无需异步框架。
+"""
+import sys
+from pathlib import Path
+
+# 确保 any_gateway 包路径在 sys.path 中
+_REPO_ROOT = Path(__file__).parent.parent
+_AG_PATH = _REPO_ROOT / "any_gateway"
+if str(_AG_PATH) not in sys.path:
+    sys.path.insert(0, str(_AG_PATH))
+
+from services.quota import check_quota
+
+
+# ---------------------------------------------------------------------------
+# check_quota 测试
+# ---------------------------------------------------------------------------
+
+def test_check_quota_unlimited_when_zero():
+    """quota_usd=0 表示无限额度，应始终返回 True，即使 used_usd 极大。"""
+    assert check_quota(quota_usd=0, used_usd=9999.99) is True
+
+
+def test_check_quota_within_limit():
+    """used_usd < quota_usd 时，在额度内，返回 True。"""
+    assert check_quota(quota_usd=10.0, used_usd=5.0) is True
+
+
+def test_check_quota_exceeded():
+    """used_usd == quota_usd 时，已用尽额度，返回 False。"""
+    assert check_quota(quota_usd=10.0, used_usd=10.0) is False
+
+
+def test_check_quota_exceeded_over():
+    """used_usd > quota_usd 时，超出额度，返回 False。"""
+    assert check_quota(quota_usd=10.0, used_usd=15.0) is False
