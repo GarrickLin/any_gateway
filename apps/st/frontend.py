@@ -8,11 +8,12 @@ from typing import Optional, List, Dict, Any
 from loguru import logger
 import traceback
 import sys
-from constants import GATEWAY_PORT, LOG_BASE_DIR, MAX_TOKENS
+from any_gateway.constants import GATEWAY_PORT, LOG_BASE_DIR, MAX_TOKENS
 from log_visualizer import vis_request, vis_response
+
 # any_gateway 未安装为包，通过 sys.path 导入
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "any_gateway"))
-from log_writer import load_day_logs
+from any_gateway.log_writer import load_day_logs
 
 # 配置
 GATEWAY_BASE_URL = f"http://localhost:{GATEWAY_PORT}/v1"  # 网关地址
@@ -424,21 +425,31 @@ def config_page():
                                 payload = {"group_name": group_name}
 
                                 with httpx.Client(timeout=10.0) as client:
-                                    response = client.post(url, headers=headers, json=payload)
+                                    response = client.post(
+                                        url, headers=headers, json=payload
+                                    )
                                     response.raise_for_status()
                                     data = response.json()
 
                                     # 更新本地配置
                                     if data.get("status") == "success":
                                         models = data.get("models", [])
-                                        st.session_state.groups[group_name]["models"] = models
+                                        st.session_state.groups[group_name][
+                                            "models"
+                                        ] = models
                                         save_config(st.session_state.groups)
-                                        st.success(f"✅ {data.get('message', '刷新成功')}")
+                                        st.success(
+                                            f"✅ {data.get('message', '刷新成功')}"
+                                        )
                                         st.rerun()
                                     else:
-                                        st.error(f"❌ 刷新失败: {data.get('message', '未知错误')}")
+                                        st.error(
+                                            f"❌ 刷新失败: {data.get('message', '未知错误')}"
+                                        )
                             except httpx.HTTPStatusError as e:
-                                st.error(f"❌ HTTP {e.response.status_code} 错误: {e.response.text}")
+                                st.error(
+                                    f"❌ HTTP {e.response.status_code} 错误: {e.response.text}"
+                                )
                             except Exception as e:
                                 logger.error(f"刷新模型列表失败: {e}")
                                 st.error(f"❌ 刷新失败: {str(e)}")
