@@ -12,9 +12,9 @@ from loguru import logger
 
 class AuthMiddleware(BaseHTTPMiddleware):
     # 跳过鉴权的路径（精确匹配）
-    SKIP_PATHS = {"/health", "/v1/models", "/v1/refresh_models"}
+    SKIP_PATHS = {"/health", "/v1/models", "/openapi.json"}
     # 跳过鉴权的路径前缀（/admin/* 有独立的 admin key 验证）
-    SKIP_PREFIXES = ("/admin",)
+    SKIP_PREFIXES = ("/admin", "/docs")
 
     async def dispatch(self, request: Request, call_next):
         # 1. 跳过不需要鉴权的路径
@@ -53,7 +53,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             expires_at_str = token["expires_at"]
             try:
                 # 处理 ISO 8601 格式（含 Z 后缀）
-                expires_dt = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+                expires_dt = datetime.fromisoformat(
+                    expires_at_str.replace("Z", "+00:00")
+                )
                 if datetime.now(timezone.utc) > expires_dt:
                     return JSONResponse({"error": "api key expired"}, status_code=401)
             except ValueError:

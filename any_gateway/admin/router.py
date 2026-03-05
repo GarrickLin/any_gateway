@@ -100,6 +100,37 @@ group_router: APIRouter = crud_router(
 # 手动业务路由
 # ---------------------------------------------------------------------------
 
+# 无需 admin key 的认证路由（登录端点本身就是鉴权入口）
+auth_router = APIRouter(prefix="/admin", tags=["Admin: Auth"])
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@auth_router.post("/auth/login", summary="Admin 登录（LDAP / fallback 认证）")
+async def admin_login(body: LoginRequest) -> dict[str, str]:
+    """通过 LDAP 或 ADMIN_FALLBACK_KEY 验证管理员凭据。
+
+    - LDAP 已配置时走 AD Simple Bind。
+    - LDAP 未配置时仅允许 ``_admin_fallback`` + ``ADMIN_FALLBACK_KEY`` 应急登录。
+
+    Returns:
+        ``{"username": "<username>"}`` 表示认证成功，否则返回 401。
+    """
+    from services.ldap_auth import check_fallback_key, ldap_service
+
+    if ldap_service is not None:
+        ok = ldap_service.authenticate(body.username, body.password)
+    else:
+        ok = check_fallback_key(body.username, body.password)
+
+    if not ok:
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    return {"username": body.username}
+
+
 admin_router = APIRouter(
     prefix="/admin",
     tags=["Admin"],

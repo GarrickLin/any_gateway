@@ -13,17 +13,12 @@ Streamlit Admin 登录认证模块。
     st.title("管理页面")
 """
 
-import sys
-from pathlib import Path
-
+import httpx
 import streamlit as st
 
-# any_gateway 未安装为包，通过 sys.path 导入
-_AG_PATH = str(Path(__file__).parent.parent.parent / "any_gateway")
-if _AG_PATH not in sys.path:
-    sys.path.insert(0, _AG_PATH)
+from any_gateway.constants import GATEWAY_PORT
 
-from services.ldap_auth import check_fallback_key, ldap_service  # noqa: E402
+_LOGIN_URL = f"http://localhost:{GATEWAY_PORT}/admin/auth/login"
 
 
 def require_admin_login() -> None:
@@ -39,29 +34,26 @@ def require_admin_login() -> None:
 
     st.title("管理员登录")
 
-    if ldap_service is None:
-        st.warning(
-            "LDAP 服务未配置（缺少 LDAP_SERVER_URL / LDAP_BASE_DN / LDAP_DOMAIN 环境变量）。\n\n"
-            "仅支持通过 `_admin_fallback` + ADMIN_FALLBACK_KEY 的应急登录方式。"
-        )
-
     with st.form("login"):
         username = st.text_input("AD 用户名")
         password = st.text_input("密码", type="password")
         submitted = st.form_submit_button("登录")
 
     if submitted:
-        if ldap_service is not None:
-            ok = ldap_service.authenticate(username, password)
-        else:
-            # 无 LDAP 服务时，仅允许 fallback key 登录
-            ok = check_fallback_key(username, password)
-
-        if ok:
-            st.session_state.admin_authenticated = True
-            st.session_state.admin_user = username
-            st.rerun()
-        else:
-            st.error("用户名或密码错误")
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.post(
+                    _LOGIN_URL,
+                    json={"username": username, "password": password},
+                )
+            if resp.status_code == 200:
+                st.session_state.admin_authenticated = True
+                st.session_state.admin_user = username
+                st.rerun()
+            else:
+                detail = resp.json().get("detail", "用户名或密码错误")
+                st.error(detail)
+        except httpx.RequestError as e:
+            st.error(f"无法连接到后端服务（localhost:{GATEWAY_PORT}）：{e}")
 
     st.stop()

@@ -1,0 +1,3 @@
+ldaptor>=21.2.0
+twisted>=24.3.0
+pyyaml>=6.0.2

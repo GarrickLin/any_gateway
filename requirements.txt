@@ -9,3 +9,5 @@ brotli
 ldap3
 sqlmodel
 fastcrud
+uvicorn
+st_copy

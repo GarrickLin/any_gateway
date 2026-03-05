@@ -1,4 +1,10 @@
 services:
+  mock-ad:
+    build: ./mock/mock_ad_server
+    ports:
+      - "1389:1389"
+    restart: unless-stopped
+
   gateway:
     build: .
     ports:

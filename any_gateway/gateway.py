@@ -15,7 +15,7 @@ from urllib.parse import urljoin
 from middleware.auth import AuthMiddleware
 from db.database import init_db
 from services.quota import check_quota, update_usage
-from admin.router import token_router, channel_router, group_router, admin_router
+from admin.router import token_router, channel_router, group_router, admin_router, auth_router
 import yaml
 import json
 import time
@@ -111,6 +111,8 @@ app.add_middleware(AuthMiddleware)
 
 # Admin 路由：FastCRUD 自动生成的 CRUD + 手动业务路由
 # verify_admin_key 依赖已在 *_deps 参数中注入，无需重复添加。
+# auth_router 无需 admin key（登录端点本身即鉴权入口）。
+app.include_router(auth_router)
 app.include_router(token_router)
 app.include_router(channel_router)
 app.include_router(group_router)

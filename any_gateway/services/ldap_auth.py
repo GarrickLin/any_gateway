@@ -79,7 +79,7 @@ class LDAPAuthService:
                 user=bind_user,
                 password=password,
                 client_strategy=SAFE_SYNC,
-                auto_bind=True,   # 自动 open + bind
+                auto_bind=True,  # 自动 open + bind
             )
             conn.unbind()
             return True
@@ -87,7 +87,9 @@ class LDAPAuthService:
             logger.warning(f"LDAP auth failed for {safe_user}: {e}")
             return False
 
-    def get_user_groups(self, username: str, service_account_dn: str, bind_pwd: str) -> list[str]:
+    def get_user_groups(
+        self, username: str, service_account_dn: str, bind_pwd: str
+    ) -> list[str]:
         """查询用户所属 AD 组（可选，用于权限映射）
 
         Args:

@@ -126,7 +126,7 @@ def main():
     # 1. 启动网关服务
     gateway_process = manager.start_process(
         "网关服务 (Gateway)",
-        [sys.executable, "-m", "uvicorn", "gateway:app", "--host", "0.0.0.0", "--port", str(GATEWAY_PORT)],
+        [sys.executable, "-m", "uvicorn", "gateway:app", "--host", "0.0.0.0", "--port", str(GATEWAY_PORT), "--app-dir", "any_gateway"],
     )
 
     if not gateway_process:
@@ -143,7 +143,7 @@ def main():
 
     frontend_process = manager.start_process(
         "前端界面 (Frontend)",
-        [sys.executable, "-m", "streamlit", "run", "frontend.py", "--server.port", str(FRONTEND_PORT)],
+        [sys.executable, "-m", "streamlit", "run", "apps/st/frontend.py", "--server.port", str(FRONTEND_PORT)],
         env=frontend_env,
     )
 

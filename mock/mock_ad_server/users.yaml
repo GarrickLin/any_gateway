@@ -1,0 +1,19 @@
+domain: "kiwimoore.com"
+base_dn: "DC=kiwimoore,DC=com"
+port: 1389
+
+users:
+  - username: "alice"
+    password: "Password123"
+    display_name: "Alice Chen"
+    email: "alice@kiwimoore.com"
+
+  - username: "bob"
+    password: "Password456"
+    display_name: "Bob Wang"
+    email: "bob@kiwimoore.com"
+
+  - username: "testuser"
+    password: "Test@1234"
+    display_name: "Test User"
+    email: "testuser@kiwimoore.com"
