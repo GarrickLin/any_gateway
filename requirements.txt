@@ -11,3 +11,4 @@ sqlmodel
 fastcrud
 uvicorn
 st_copy
+python-jose[cryptography]

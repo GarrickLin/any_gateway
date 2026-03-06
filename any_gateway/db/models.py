@@ -86,6 +86,7 @@ class ChannelBase(SQLModel):
     weight: int = Field(default=1)
     enabled: bool = Field(default=True)
     models: str | None = None
+    model_mapping: str | None = None  # JSON string, e.g. '{"gpt-4o": "claude-opus-4-5"}'
 
 
 class Channel(ChannelBase, table=True):
@@ -100,10 +101,12 @@ class ChannelCreate(ChannelBase):
 
 class ChannelUpdate(SQLModel):
     name: str | None = None
+    base_url: str | None = None
     api_key: str | None = None
     weight: int | None = None
     enabled: bool | None = None
     models: str | None = None
+    model_mapping: str | None = None
 
 
 # =======================
@@ -146,3 +149,15 @@ class Voucher(VoucherBase, table=True):
 
 class VoucherCreate(VoucherBase):
     pass
+
+
+# =======================
+# AdminUser（管理员账户）
+# =======================
+
+class AdminUser(SQLModel, table=True):
+    __tablename__ = "admin_users"
+    username: str = Field(primary_key=True)   # LDAP 用户名
+    role: str = Field(default="admin")         # "admin" | "superadmin"
+    created_by: str | None = None
+    created_at: str = Field(default_factory=utcnow)

@@ -3,6 +3,10 @@ base_dn: "DC=kiwimoore,DC=com"
 port: 1389
 
 users:
+  - username: "superadmin"
+    password: "superadmin"
+    display_name: "Super Admin"
+    email: "superadmin@kiwimoore.com"
   - username: "alice"
     password: "Password123"
     display_name: "Alice Chen"

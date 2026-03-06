@@ -6,12 +6,16 @@ Admin CRUD API 路由。
 - 所有 /admin/* 路由均需要 x-admin-key Header 校验。
 """
 
+import json
 import os
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastcrud import FastCRUD, crud_router
+from jose import JWTError
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -19,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import async_session_generator
 from db.models import (
+    AdminUser,
     Channel,
     ChannelCreate,
     ChannelUpdate,
@@ -30,6 +35,7 @@ from db.models import (
     UserGroupCreate,
     UserGroupUpdate,
 )
+from services.auth_service import require_auth, require_role, verify_token
 
 # ---------------------------------------------------------------------------
 # Admin Key 验证依赖
@@ -44,12 +50,41 @@ async def verify_admin_key(x_admin_key: str = Header(...)) -> None:
         raise HTTPException(status_code=403, detail="Invalid admin key")
 
 
+async def require_admin_access(
+    authorization: str = Header(default=""),
+    x_admin_key: str = Header(default=""),
+) -> None:
+    """统一 Admin 鉴权依赖，支持两种方式（任一满足即可）：
+
+    1. ``x-admin-key`` header —— 程序化 / Legacy 访问。
+    2. ``Authorization: Bearer <JWT>`` —— 前端登录后的 JWT（role 须为 admin 或 superadmin）。
+    """
+    # 方式一：x-admin-key 静态密钥
+    admin_key = os.environ.get("ADMIN_KEY", "")
+    if x_admin_key and admin_key and x_admin_key == admin_key:
+        return
+
+    # 方式二：JWT Bearer token
+    if authorization.startswith("Bearer "):
+        token_str = authorization[len("Bearer "):]
+        try:
+            payload = verify_token(token_str)
+        except JWTError:
+            raise HTTPException(status_code=401, detail="Token 无效或已过期")
+        role = payload.get("role", "user")
+        if role in ("admin", "superadmin"):
+            return
+        raise HTTPException(status_code=403, detail="Permission denied: 需要 admin 或 superadmin 角色")
+
+    raise HTTPException(status_code=403, detail="需要 x-admin-key 或有效的 Admin JWT")
+
+
 # ---------------------------------------------------------------------------
 # FastCRUD 自动生成的 CRUD 路由
 # fastcrud 的 *_deps 参数接受可调用对象（函数），不是 Depends() 包装对象。
 # ---------------------------------------------------------------------------
 
-_common_deps = [verify_admin_key]
+_common_deps = [require_admin_access]
 
 token_router: APIRouter = crud_router(
     session=async_session_generator,
@@ -58,7 +93,8 @@ token_router: APIRouter = crud_router(
     update_schema=TokenUpdate,
     path="/admin/tokens",
     tags=["Admin: Tokens"],
-    create_deps=_common_deps,
+    # create 端点单独定义（需返回含 key 的完整 Token）
+    deleted_methods=["create"],
     read_deps=_common_deps,
     read_multi_deps=_common_deps,
     update_deps=_common_deps,
@@ -103,6 +139,9 @@ group_router: APIRouter = crud_router(
 # 无需 admin key 的认证路由（登录端点本身就是鉴权入口）
 auth_router = APIRouter(prefix="/admin", tags=["Admin: Auth"])
 
+# /auth/me 路由（无 /admin 前缀，需要 Bearer JWT）
+me_router = APIRouter(prefix="/auth", tags=["Auth"])
+
 
 class LoginRequest(BaseModel):
     username: str
@@ -110,32 +149,77 @@ class LoginRequest(BaseModel):
 
 
 @auth_router.post("/auth/login", summary="Admin 登录（LDAP / fallback 认证）")
-async def admin_login(body: LoginRequest) -> dict[str, str]:
+async def admin_login(
+    body: LoginRequest,
+    session: AsyncSession = Depends(async_session_generator),
+) -> dict[str, str]:
     """通过 LDAP 或 ADMIN_FALLBACK_KEY 验证管理员凭据。
 
     - LDAP 已配置时走 AD Simple Bind。
     - LDAP 未配置时仅允许 ``_admin_fallback`` + ``ADMIN_FALLBACK_KEY`` 应急登录。
 
     Returns:
-        ``{"username": "<username>"}`` 表示认证成功，否则返回 401。
+        ``{"access_token": "<jwt>", "token_type": "bearer", "role": "<role>"}``
+        认证成功；否则返回 401。
     """
     from services.ldap_auth import check_fallback_key, ldap_service
+    from services.auth_service import create_access_token, get_user_role
 
+    is_fallback = False
     if ldap_service is not None:
         ok = ldap_service.authenticate(body.username, body.password)
+        # fallback key 在 ldap_service.authenticate 内部也会检查
+        if ok and body.username == "_admin_fallback":
+            is_fallback = True
     else:
         ok = check_fallback_key(body.username, body.password)
+        if ok:
+            is_fallback = True
 
     if not ok:
         raise HTTPException(status_code=401, detail="用户名或密码错误")
-    return {"username": body.username}
+
+    # fallback 应急管理员固定为 superadmin
+    if is_fallback:
+        role = "superadmin"
+    else:
+        role = await get_user_role(body.username, session)
+
+    token = create_access_token(body.username, role)
+    return {"access_token": token, "token_type": "bearer", "role": role}
+
+
+@me_router.get("/me", summary="获取当前登录用户信息")
+async def get_me(user: dict = Depends(require_auth)) -> dict[str, str]:
+    return user
 
 
 admin_router = APIRouter(
     prefix="/admin",
     tags=["Admin"],
-    dependencies=[Depends(verify_admin_key)],
+    dependencies=[Depends(require_admin_access)],
 )
+
+
+# ------ 创建 Token（需返回含 key 的完整记录）-----------------------------------
+
+
+@admin_router.post("/tokens", summary="创建 Token（返回含 key 的完整记录）", response_model=Token)
+async def create_token(
+    body: TokenCreate,
+    session: AsyncSession = Depends(async_session_generator),
+) -> Token:
+    """创建 Token 并返回完整记录（含一次性明文 key）。
+
+    FastCRUD crud_router 的 create 端点响应 schema 为 TokenCreate，不含 key 字段，
+    因此单独实现此端点以确保前端能获取到生成的 key。
+    """
+    token = Token(**body.model_dump())
+    session.add(token)
+    await session.commit()
+    await session.refresh(token)
+    logger.info(f"Token [{token.name}] 已创建，id={token.id}")
+    return token
 
 
 # ------ 冻结 / 解冻 Token --------------------------------------------------
@@ -168,6 +252,57 @@ async def freeze_token(
         raise HTTPException(status_code=500, detail="Failed to retrieve updated token")
     logger.info(f"Token {token_id} frozen={body.frozen}")
     return updated
+
+
+# ------ 从上游拉取模型列表 --------------------------------------------------
+
+
+@admin_router.post("/channels/{channel_id}/fetch-models", summary="从上游拉取模型列表")
+async def fetch_channel_models(
+    channel_id: str,
+    session: AsyncSession = Depends(async_session_generator),
+) -> dict:
+    """向上游 API 发送 GET /models 请求，将返回的模型列表存储到 Channel.models（JSON 格式）。"""
+    crud = FastCRUD(Channel)
+    channel = await crud.get(session, id=channel_id)
+    # FastCRUD.get() 返回 dict | None（无 schema_to_select 时）
+    if channel is None:
+        raise HTTPException(status_code=404, detail="Channel not found")
+
+    # 向上游拉取模型
+    models_url = f"{channel['base_url'].rstrip('/')}/models"
+    headers = {"Authorization": f"Bearer {channel['api_key']}"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(models_url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+
+        # 支持 OpenAI 格式（data 字段）和其他格式
+        if "data" in data:
+            models = data["data"]
+        elif "models" in data:
+            models = data["models"]
+        else:
+            models = []
+
+        # 截断过大的模型列表
+        MAX_MODELS = 500
+        if len(models) > MAX_MODELS:
+            logger.warning(f"Channel {channel_id} 返回 {len(models)} 个模型，截断至 {MAX_MODELS}")
+            models = models[:MAX_MODELS]
+
+        # 存储为 JSON string
+        models_json = json.dumps(models, ensure_ascii=False)
+        await crud.update(session, object={"models": models_json}, id=channel_id)
+
+        return {"ok": True, "count": len(models), "models": models}
+
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"上游返回 {e.response.status_code}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"连接上游失败: {str(e)}")
 
 
 # ------ 统计接口 ------------------------------------------------------------
@@ -269,3 +404,92 @@ async def stats_models(
         )
         for row in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# 用户管理路由（JWT 鉴权，需要 superadmin 角色）
+# 使用独立 router 以避免与 admin_router 的 x-admin-key 依赖冲突
+# ---------------------------------------------------------------------------
+
+users_router = APIRouter(prefix="/admin", tags=["Admin: Users"])
+
+
+class PromoteRequest(BaseModel):
+    username: str
+    role: str  # "admin" | "superadmin"
+
+
+@users_router.get("/users", summary="列出所有管理员用户")
+async def list_admin_users(
+    session: AsyncSession = Depends(async_session_generator),
+    _user: dict = Depends(require_role("superadmin")),
+) -> list[AdminUser]:
+    """查询 admin_users 表全部记录，按 created_at 升序返回。"""
+    stmt = select(AdminUser).order_by(AdminUser.created_at.asc())
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+@users_router.post("/users/promote", summary="提权 / 更新管理员角色")
+async def promote_user(
+    body: PromoteRequest,
+    session: AsyncSession = Depends(async_session_generator),
+    current_user: dict = Depends(require_role("superadmin")),
+) -> AdminUser:
+    """将指定 LDAP 用户提权为 admin 或 superadmin。
+
+    - 已在 admin_users 表中 → 更新 role。
+    - 不在表中 → 插入新记录（created_by 为当前登录用户）。
+    """
+    if body.role not in ("admin", "superadmin"):
+        raise HTTPException(status_code=422, detail="role 必须为 'admin' 或 'superadmin'")
+
+    stmt = select(AdminUser).where(AdminUser.username == body.username)
+    result = await session.execute(stmt)
+    existing = result.scalar_one_or_none()
+
+    if existing is not None:
+        existing.role = body.role
+        session.add(existing)
+        await session.commit()
+        await session.refresh(existing)
+        logger.info(f"用户 [{body.username}] 角色更新为 [{body.role}]，操作者：{current_user['username']}")
+        return existing
+    else:
+        new_user = AdminUser(
+            username=body.username,
+            role=body.role,
+            created_by=current_user["username"],
+        )
+        session.add(new_user)
+        await session.commit()
+        await session.refresh(new_user)
+        logger.info(f"用户 [{body.username}] 已提权为 [{body.role}]，操作者：{current_user['username']}")
+        return new_user
+
+
+@users_router.delete("/users/{username}", summary="降权（删除管理员记录）")
+async def demote_user(
+    username: str,
+    session: AsyncSession = Depends(async_session_generator),
+    current_user: dict = Depends(require_role("superadmin")),
+) -> dict:
+    """从 admin_users 表删除指定用户（降权为普通用户）。
+
+    - 不存在 → 404。
+    - 存在 → 删除并返回 ``{"ok": true}``。
+    """
+    if username == current_user["username"]:
+        raise HTTPException(status_code=400, detail="不能降权自己")
+
+    stmt = select(AdminUser).where(AdminUser.username == username)
+    result = await session.execute(stmt)
+    existing = result.scalar_one_or_none()
+
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"用户 [{username}] 不存在于 admin_users 表")
+
+    await session.delete(existing)
+    await session.commit()
+    logger.info(f"用户 [{username}] 已从 admin_users 删除，操作者：{current_user['username']}")
+    return {"ok": True}
