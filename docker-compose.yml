@@ -8,8 +8,7 @@ services:
   gateway:
     build: .
     ports:
-      - "8002:8002"
-      - "8502:8502"
+      - "8003:8003"
     volumes:
       - ./data:/app/data
     environment:
@@ -18,9 +17,11 @@ services:
       - LDAP_BASE_DN=${LDAP_BASE_DN:-}
       - LDAP_DOMAIN=${LDAP_DOMAIN:-}
       - ADMIN_FALLBACK_KEY=${ADMIN_FALLBACK_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - SUPERADMIN_USERNAME=${SUPERADMIN_USERNAME:-superadmin}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 30s
       timeout: 10s
       start_period: 15s

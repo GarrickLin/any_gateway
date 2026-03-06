@@ -1,8 +1,10 @@
-from fastapi.responses import Response, JSONResponse, StreamingResponse
+from fastapi.responses import Response, JSONResponse, StreamingResponse, FileResponse
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.staticfiles import StaticFiles
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
+from pathlib import Path
 from constants import (
     GATEWAY_PORT,
     MAX_QUEUE_SIZE,
@@ -15,7 +17,7 @@ from urllib.parse import urljoin
 from middleware.auth import AuthMiddleware
 from db.database import init_db
 from services.quota import check_quota, update_usage
-from admin.router import token_router, channel_router, group_router, admin_router, auth_router
+from admin.router import token_router, channel_router, group_router, admin_router, auth_router, me_router, users_router
 import yaml
 import json
 import time
@@ -33,6 +35,17 @@ async def lifespan(app: FastAPI):
     # 初始化数据库
     await init_db()
     logger.info("数据库初始化完成")
+
+    # 初始化超级管理员（若 SUPERADMIN_USERNAME 已配置）
+    from services.auth_service import init_superadmin
+    from db.database import engine
+    from sqlalchemy.ext.asyncio import AsyncSession
+    try:
+        async with AsyncSession(engine) as session:
+            await init_superadmin(session)
+        logger.info("超级管理员初始化检查完成")
+    except Exception as _e:
+        logger.error(f"超级管理员初始化失败，应用继续启动: {_e}")
 
     # 初始化日志队列
     log_writer.log_queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
@@ -113,10 +126,12 @@ app.add_middleware(AuthMiddleware)
 # verify_admin_key 依赖已在 *_deps 参数中注入，无需重复添加。
 # auth_router 无需 admin key（登录端点本身即鉴权入口）。
 app.include_router(auth_router)
+app.include_router(me_router)
 app.include_router(token_router)
 app.include_router(channel_router)
 app.include_router(group_router)
 app.include_router(admin_router)
+app.include_router(users_router)
 
 
 def load_config() -> Dict[str, Any]:
@@ -780,8 +795,25 @@ async def gateway(request: Request, path: str):
     return await forward_request(new_request, path, backend_url, api_key)
 
 
+# --------------------------------------------------------------------------- #
+# React 前端静态文件服务（生产构建）
+# 放在所有 API 路由之后，作为兜底处理器
+# --------------------------------------------------------------------------- #
+_STATIC_DIR = Path(__file__).parent.parent / "apps" / "react" / "dist"
+
+if _STATIC_DIR.exists():
+    # /assets 目录包含带 hash 的 JS/CSS 文件，可强缓存
+    _assets_dir = _STATIC_DIR / "assets"
+    if _assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=_assets_dir), name="static-assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str) -> FileResponse:
+        """SPA fallback：所有未匹配的 GET 请求均返回 index.html，由前端路由处理"""
+        return FileResponse(_STATIC_DIR / "index.html")
+
+
 if __name__ == "__main__":
     import uvicorn
 
-    # uvicorn.run("__main__:app", host="0.0.0.0", port=GATEWAY_PORT, reload=True)
     uvicorn.run("__main__:app", host="0.0.0.0", port=GATEWAY_PORT)

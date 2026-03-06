@@ -1,0 +1,24 @@
+import client from './client'
+
+export interface LogsFilter {
+  start_date?: string
+  end_date?: string
+  token_id?: string
+  model?: string
+  group_id?: string
+  status?: number
+  page?: number
+  page_size?: number
+}
+
+export const getLogs = (params?: LogsFilter) =>
+  client.get('/admin/logs', { params })
+
+export const getStatsOverview = () =>
+  client.get('/admin/stats/overview')
+
+export const getStatsTokens = () =>
+  client.get('/admin/stats/tokens')
+
+export const getStatsModels = () =>
+  client.get('/admin/stats/models')
