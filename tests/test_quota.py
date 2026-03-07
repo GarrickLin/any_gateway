@@ -36,3 +36,11 @@ def test_check_quota_exceeded():
 def test_check_quota_exceeded_over():
     """used_usd > quota_usd 时，超出额度，返回 False。"""
     assert check_quota(quota_usd=10.0, used_usd=15.0) is False
+
+
+def test_update_usage_accepts_request_id():
+    """update_usage 应接受 request_id 参数"""
+    import inspect
+    from services.quota import update_usage
+    sig = inspect.signature(update_usage)
+    assert "request_id" in sig.parameters

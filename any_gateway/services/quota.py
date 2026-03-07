@@ -39,6 +39,7 @@ async def update_usage(
     status: int | None,
     is_stream: bool,
     username: str | None = None,
+    request_id: str | None = None,  # 新增：外部传入时作为 UsageLog.id
 ) -> None:
     """
     1. 递增 Token.used_usd（通过 SQL 级原子 UPDATE）
@@ -60,6 +61,7 @@ async def update_usage(
 
             # 2. 插入 UsageLog 记录
             log = UsageLog(
+                **({"id": request_id} if request_id else {}),
                 token_id=token_id,
                 channel_id=channel_id,
                 model=model,
