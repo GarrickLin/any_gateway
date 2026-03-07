@@ -61,7 +61,7 @@ async def update_usage(
 
             # 2. 插入 UsageLog 记录
             log = UsageLog(
-                **({"id": request_id} if request_id else {}),
+                **({"id": request_id} if request_id is not None else {}),
                 token_id=token_id,
                 channel_id=channel_id,
                 model=model,

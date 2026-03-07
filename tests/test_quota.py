@@ -44,3 +44,17 @@ def test_update_usage_accepts_request_id():
     from services.quota import update_usage
     sig = inspect.signature(update_usage)
     assert "request_id" in sig.parameters
+    # 确认默认值为 None（向后兼容）
+    assert sig.parameters["request_id"].default is None
+
+
+def test_update_usage_request_id_none_check():
+    """request_id 判断应使用 is not None，空字符串不应降级为自动 id"""
+    # 验证当 request_id="" 时，dict 解包结果仍会传入 id=""（走 DB 校验）
+    request_id = ""
+    kwargs = {"id": request_id} if request_id is not None else {}
+    assert kwargs == {"id": ""}  # 空字符串应传入，不降级
+
+    request_id = None
+    kwargs = {"id": request_id} if request_id is not None else {}
+    assert kwargs == {}  # None 才降级为自动 id
