@@ -26,6 +26,9 @@ ENGINE = create_async_engine(
 
 @pytest.fixture(scope="module", autouse=True)
 def setup():
+    import db.database as _db
+    original_engine = _db.engine  # 保存原始 engine
+
     async def _run():
         import db.models  # noqa: F401 - 确保所有表注册到 metadata
         async with ENGINE.begin() as conn:
@@ -62,10 +65,18 @@ def setup():
             s.add(UserGroupMembership(username="alice", group_id=g_low.id))
             await s.commit()
 
-    # 覆盖 gateway 使用的 engine
-    import db.database as _db
+    # 覆盖 gateway 使用的 engine，在 yield 之前替换
     _db.engine = ENGINE
+
+    # gateway.py 使用 `from db.database import engine`，需要同时覆盖其本地绑定
+    import gateway as _gw
+    original_gw_engine = _gw.engine
+    _gw.engine = ENGINE
+
     asyncio.run(_run())
+    yield  # 测试运行
+    _db.engine = original_engine  # teardown: 还原 db.database.engine
+    _gw.engine = original_gw_engine  # teardown: 还原 gateway.engine
 
 
 def test_routing_picks_highest_priority_group():

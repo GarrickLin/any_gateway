@@ -1,12 +1,19 @@
 import React, { useState, useEffect } from 'react'
 import {
   Table, Button, Modal, Form, Input, Select,
-  Popconfirm, Tag, Message, Typography
+  Popconfirm, Tag, Message, Typography, Tabs, Space
 } from '@arco-design/web-react'
 import { getAdminUsers, promoteUser, demoteUser } from '../../api/users'
+import { getGroups } from '../../api/groups'
 import { useAuthStore } from '../../store/auth'
+import client from '../../api/client'
 
-const Users: React.FC = () => {
+const { TabPane } = Tabs
+
+// ========================
+// Tab 1: 管理员权限（原有功能）
+// ========================
+const AdminTab: React.FC = () => {
   const { username: currentUser } = useAuthStore()
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
@@ -85,7 +92,7 @@ const Users: React.FC = () => {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Typography.Title heading={5} style={{ margin: 0 }}>用户权限管理</Typography.Title>
+        <div />
         <Button type="primary" onClick={() => setVisible(true)}>提权用户</Button>
       </div>
 
@@ -109,6 +116,223 @@ const Users: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
+    </div>
+  )
+}
+
+// ========================
+// Tab 2: 用户分组管理
+// ========================
+const UserGroupTab: React.FC = () => {
+  const [adUsers, setAdUsers] = useState<any[]>([])
+  const [adLoading, setAdLoading] = useState(false)
+
+  // 选中用户的分组
+  const [selectedUser, setSelectedUser] = useState<string | null>(null)
+  const [userGroups, setUserGroups] = useState<any[]>([])
+  const [userGroupLoading, setUserGroupLoading] = useState(false)
+
+  // 所有分组（用于添加下拉）
+  const [allGroups, setAllGroups] = useState<any[]>([])
+  const [addingGroupId, setAddingGroupId] = useState<string>('')
+  const [addLoading, setAddLoading] = useState(false)
+
+  // Modal 可见性
+  const [groupModalOpen, setGroupModalOpen] = useState(false)
+
+  const fetchAdUsers = async () => {
+    setAdLoading(true)
+    try {
+      const res = await client.get('/admin/users-list')
+      const raw = res.data?.data ?? res.data
+      setAdUsers(Array.isArray(raw) ? raw : [])
+    } catch {
+      Message.error('获取用户列表失败')
+    } finally {
+      setAdLoading(false)
+    }
+  }
+
+  const fetchAllGroups = async () => {
+    try {
+      const res = await getGroups()
+      const raw = res.data?.data ?? res.data
+      setAllGroups(Array.isArray(raw) ? raw : [])
+    } catch {
+      // 静默处理
+    }
+  }
+
+  useEffect(() => {
+    fetchAdUsers()
+    fetchAllGroups()
+  }, [])
+
+  const openUserGroupModal = async (username: string) => {
+    setSelectedUser(username)
+    setAddingGroupId('')
+    setGroupModalOpen(true)
+    setUserGroupLoading(true)
+    try {
+      const res = await client.get(`/admin/users-list/${username}/groups`)
+      const raw = res.data?.data ?? res.data
+      setUserGroups(Array.isArray(raw) ? raw : [])
+    } catch {
+      Message.error('获取用户分组失败')
+    } finally {
+      setUserGroupLoading(false)
+    }
+  }
+
+  const handleAddUserToGroup = async () => {
+    if (!addingGroupId) {
+      Message.warning('请选择要加入的分组')
+      return
+    }
+    setAddLoading(true)
+    try {
+      await client.post(`/admin/users-list/${selectedUser}/groups/${addingGroupId}`)
+      Message.success('已加入分组')
+      setAddingGroupId('')
+      // 刷新用户分组
+      const res = await client.get(`/admin/users-list/${selectedUser}/groups`)
+      const raw = res.data?.data ?? res.data
+      setUserGroups(Array.isArray(raw) ? raw : [])
+    } catch (err: any) {
+      Message.error(err?.response?.data?.detail || '操作失败')
+    } finally {
+      setAddLoading(false)
+    }
+  }
+
+  const handleRemoveUserFromGroup = async (groupId: string) => {
+    try {
+      await client.delete(`/admin/users-list/${selectedUser}/groups/${groupId}`)
+      Message.success('已退出分组')
+      setUserGroups((prev) => prev.filter((g) => g.id !== groupId))
+    } catch (err: any) {
+      Message.error(err?.response?.data?.detail || '操作失败')
+    }
+  }
+
+  // 已在用户分组中的 id 集合
+  const userGroupIds = new Set(userGroups.map((g) => g.id))
+  const groupOptions = allGroups
+    .filter((g) => !userGroupIds.has(g.id))
+    .map((g) => ({ label: g.name, value: g.id }))
+
+  const adUserColumns = [
+    { title: '用户名', dataIndex: 'username' },
+    { title: '显示名', dataIndex: 'display_name', render: (v: string) => v || '-' },
+    { title: '邮箱', dataIndex: 'email', render: (v: string) => v || '-' },
+    {
+      title: '操作',
+      render: (_: any, row: any) => (
+        <Button size="mini" type="text" onClick={() => openUserGroupModal(row.username)}>
+          管理分组
+        </Button>
+      )
+    },
+  ]
+
+  const userGroupColumns = [
+    { title: '分组名称', dataIndex: 'name' },
+    { title: 'RPM 限制', dataIndex: 'rpm_limit' },
+    { title: 'TPM 限制', dataIndex: 'tpm_limit' },
+    { title: 'Priority', dataIndex: 'priority' },
+    {
+      title: '操作',
+      render: (_: any, row: any) => (
+        <Popconfirm
+          title={`确认将用户 "${selectedUser}" 从分组 "${row.name}" 移除？`}
+          onOk={() => handleRemoveUserFromGroup(row.id)}
+        >
+          <Button size="mini" type="text" status="danger">退出</Button>
+        </Popconfirm>
+      )
+    },
+  ]
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <Typography.Text type="secondary">
+          显示所有 AD 用户，点击"管理分组"可查看并配置用户所属分组。
+        </Typography.Text>
+      </div>
+
+      <Table
+        columns={adUserColumns}
+        data={adUsers}
+        loading={adLoading}
+        rowKey="username"
+        pagination={{ pageSize: 20, showTotal: true }}
+      />
+
+      {/* 用户分组管理 Modal */}
+      <Modal
+        title={`用户分组 — ${selectedUser ?? ''}`}
+        visible={groupModalOpen}
+        onCancel={() => setGroupModalOpen(false)}
+        footer={
+          <Button onClick={() => setGroupModalOpen(false)}>关闭</Button>
+        }
+        style={{ width: 560 }}
+        unmountOnExit
+      >
+        {/* 添加分组区域 */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          <Select
+            style={{ flex: 1 }}
+            placeholder="选择要加入的分组"
+            options={groupOptions}
+            value={addingGroupId || undefined}
+            onChange={(v) => setAddingGroupId(v)}
+            showSearch
+            allowClear
+          />
+          <Button
+            type="primary"
+            loading={addLoading}
+            onClick={handleAddUserToGroup}
+          >
+            加入
+          </Button>
+        </div>
+
+        {/* 已在的分组列表 */}
+        <Table
+          rowKey="id"
+          columns={userGroupColumns}
+          data={userGroups}
+          loading={userGroupLoading}
+          pagination={false}
+          noDataElement={
+            <div style={{ textAlign: 'center', color: '#999', padding: 16 }}>
+              该用户尚未加入任何分组
+            </div>
+          }
+        />
+      </Modal>
+    </div>
+  )
+}
+
+// ========================
+// 主组件：Users
+// ========================
+const Users: React.FC = () => {
+  return (
+    <div>
+      <Typography.Title heading={5} style={{ marginBottom: 16 }}>用户管理</Typography.Title>
+      <Tabs defaultActiveTab="admin">
+        <TabPane key="admin" title="管理员权限">
+          <AdminTab />
+        </TabPane>
+        <TabPane key="usergroup" title="用户分组">
+          <UserGroupTab />
+        </TabPane>
+      </Tabs>
     </div>
   )
 }
