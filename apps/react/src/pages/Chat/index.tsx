@@ -3,7 +3,6 @@ import {
   Select, Button, Input, Typography, Space, Message
 } from '@arco-design/web-react'
 import { getTokens } from '../../api/tokens'
-import { getChannels } from '../../api/channels'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -33,26 +32,16 @@ const Chat: React.FC = () => {
     try {
       const res = await getTokens()
       const raw = res.data?.data ?? res.data
-      setKeys(Array.isArray(raw) ? raw : [])
+      setKeys(Array.isArray(raw) ? raw.filter((k: any) => !k.frozen) : [])
     } catch {}
   }
 
   const loadModels = async () => {
     try {
-      const res = await getChannels()
-      const raw = res.data?.data ?? res.data
-      const channels = Array.isArray(raw) ? raw : []
-      const modelSet = new Set<string>()
-      channels.forEach((ch: any) => {
-        try {
-          const mods: any[] = JSON.parse(ch.models || '[]')
-          mods.forEach((m: any) => {
-            const id = m.id || m.name || (typeof m === 'string' ? m : '')
-            if (id) modelSet.add(id)
-          })
-        } catch {}
-      })
-      setModels([...modelSet])
+      const res = await fetch('/v1/models')
+      const json = await res.json()
+      const data: any[] = json.data ?? []
+      setModels(data.map((m: any) => m.id).filter(Boolean))
     } catch {}
   }
 

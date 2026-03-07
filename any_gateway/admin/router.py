@@ -94,13 +94,12 @@ token_router: APIRouter = crud_router(
     update_schema=TokenUpdate,
     path="/user/tokens",
     tags=["User: Tokens"],
-    # create 端点单独定义（需返回含 key 的完整 Token）
-    deleted_methods=["create"],
+    # create/read_multi/delete 端点单独定义：
+    #   create    —— 需返回含 key 的完整 Token
+    #   read_multi/delete/db_delete —— 需按登录用户过滤，仅能操作自己的 Token
+    deleted_methods=["create", "read_multi", "delete", "db_delete"],
     read_deps=_user_deps,
-    read_multi_deps=_user_deps,
     update_deps=_user_deps,
-    delete_deps=_user_deps,
-    db_delete_deps=_user_deps,
 )
 
 channel_router: APIRouter = crud_router(
@@ -215,22 +214,55 @@ user_router = APIRouter(
 # ------ 创建 Token（需返回含 key 的完整记录）-----------------------------------
 
 
+@user_router.get("/tokens", summary="列出当前用户的 Token")
+async def list_my_tokens(
+    session: AsyncSession = Depends(async_session_generator),
+    current_user: dict = Depends(require_auth),
+) -> dict:
+    """仅返回当前登录用户自己创建的 Token。"""
+    stmt = select(Token).where(Token.username == current_user["username"]).order_by(Token.created_at.desc())
+    result = await session.execute(stmt)
+    tokens = list(result.scalars().all())
+    return {"data": [t.model_dump() for t in tokens], "total": len(tokens)}
+
+
 @user_router.post("/tokens", summary="创建 Token（返回含 key 的完整记录）", response_model=Token)
 async def create_token(
     body: TokenCreate,
     session: AsyncSession = Depends(async_session_generator),
+    current_user: dict = Depends(require_auth),
 ) -> Token:
     """创建 Token 并返回完整记录（含一次性明文 key）。
 
     FastCRUD crud_router 的 create 端点响应 schema 为 TokenCreate，不含 key 字段，
     因此单独实现此端点以确保前端能获取到生成的 key。
+    username 自动从 JWT 注入，用户只能为自己创建 Token。
     """
     token = Token(**body.model_dump())
+    token.username = current_user["username"]
     session.add(token)
     await session.commit()
     await session.refresh(token)
-    logger.info(f"Token [{token.name}] 已创建，id={token.id}")
+    logger.info(f"Token [{token.name}] 已创建，id={token.id}，用户：{current_user['username']}")
     return token
+
+
+@user_router.delete("/tokens/{token_id}", summary="删除 Token（仅限自己的）")
+async def delete_my_token(
+    token_id: str,
+    session: AsyncSession = Depends(async_session_generator),
+    current_user: dict = Depends(require_auth),
+) -> dict:
+    """删除指定 Token，仅允许删除自己的 Token（admin/superadmin 可删除任意 Token）。"""
+    crud = FastCRUD(Token)
+    token = await crud.get(session, id=token_id)
+    if token is None:
+        raise HTTPException(status_code=404, detail="Token not found")
+    if token["username"] != current_user["username"] and current_user["role"] not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="无权删除他人的 Token")
+    await crud.db_delete(session, id=token_id)
+    logger.info(f"Token {token_id} 已删除，操作者：{current_user['username']}")
+    return {"ok": True}
 
 
 # ------ 冻结 / 解冻 Token --------------------------------------------------
@@ -247,13 +279,18 @@ async def freeze_token(
     token_id: str,
     body: FreezeRequest,
     session: AsyncSession = Depends(async_session_generator),
+    current_user: dict = Depends(require_auth),
 ) -> dict[str, Any]:
-    """将指定 Token 设置为冻结（frozen=True）或解冻（frozen=False）。"""
+    """将指定 Token 设置为冻结（frozen=True）或解冻（frozen=False）。
+    仅允许操作自己的 Token（admin/superadmin 可操作任意 Token）。
+    """
     crud = FastCRUD(Token)
     # 先检查 token 是否存在
     token = await crud.get(session, id=token_id)
     if token is None:
         raise HTTPException(status_code=404, detail="Token not found")
+    if token["username"] != current_user["username"] and current_user["role"] not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="无权操作他人的 Token")
 
     # 更新冻结状态
     await crud.update(session, object={"frozen": body.frozen}, id=token_id)
@@ -261,8 +298,32 @@ async def freeze_token(
     updated = await crud.get(session, id=token_id)
     if updated is None:
         raise HTTPException(status_code=500, detail="Failed to retrieve updated token")
-    logger.info(f"Token {token_id} frozen={body.frozen}")
+    logger.info(f"Token {token_id} frozen={body.frozen}，操作者：{current_user['username']}")
     return updated
+
+
+@user_router.get("/logs", summary="查询当前用户的请求日志")
+async def list_my_logs(
+    session: AsyncSession = Depends(async_session_generator),
+    current_user: dict = Depends(require_auth),
+    page: int = 1,
+    page_size: int = 20,
+    model: str | None = None,
+    status: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict:
+    """仅返回当前用户名下所有 Token 的日志。"""
+    return await _query_logs(
+        session=session,
+        page=page,
+        page_size=page_size,
+        model=model,
+        status=status,
+        start_date=start_date,
+        end_date=end_date,
+        username=current_user["username"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -330,9 +391,8 @@ async def fetch_channel_models(
 # ------ 日志查询接口 ---------------------------------------------------------
 
 
-@admin_router.get("/logs", summary="查询请求日志")
-async def list_logs(
-    session: AsyncSession = Depends(async_session_generator),
+async def _query_logs(
+    session: AsyncSession,
     page: int = 1,
     page_size: int = 20,
     model: str | None = None,
@@ -340,14 +400,23 @@ async def list_logs(
     status: int | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
+    username: str | None = None,
 ) -> dict:
-    """分页查询 usage_logs，支持按模型、token_id、状态码、日期范围过滤。"""
-    stmt = select(UsageLog)
+    """日志查询核心逻辑，admin 和 user 端点共用。username 非空时限定到该用户。"""
+    stmt = (
+        select(UsageLog, Token.name.label("token_name"), Token.username.label("token_username"))
+        .outerjoin(Token, UsageLog.token_id == Token.id)
+    )
 
     if model:
         stmt = stmt.where(UsageLog.model == model)
     if token_id:
         stmt = stmt.where(UsageLog.token_id == token_id)
+    if username:
+        # 优先匹配冗余存储的 username，兼容 Token 已删除的旧记录
+        stmt = stmt.where(
+            (UsageLog.username == username) | (Token.username == username)
+        )
     if status:
         if status >= 500:
             stmt = stmt.where(UsageLog.status >= 500)
@@ -361,19 +430,51 @@ async def list_logs(
         stmt = stmt.where(UsageLog.created_at <= end_date + "T23:59:59")
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
-    total_result = await session.execute(count_stmt)
-    total = total_result.scalar() or 0
+    total = (await session.execute(count_stmt)).scalar() or 0
 
     stmt = stmt.order_by(UsageLog.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
-    result = await session.execute(stmt)
-    rows = list(result.scalars().all())
+    rows = (await session.execute(stmt)).all()
 
     return {
-        "data": [row.model_dump() for row in rows],
+        "data": [
+            {
+                **log.model_dump(),
+                "token_name": token_name,
+                # UsageLog.username 冗余存储，Token 删除后仍可追溯；兜底取 Token.username（兼容旧数据）
+                "username": log.username or token_username,
+            }
+            for log, token_name, token_username in rows
+        ],
         "total": total,
         "page": page,
         "page_size": page_size,
     }
+
+
+@admin_router.get("/logs", summary="查询请求日志")
+async def list_logs(
+    session: AsyncSession = Depends(async_session_generator),
+    page: int = 1,
+    page_size: int = 20,
+    model: str | None = None,
+    token_id: str | None = None,
+    status: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    username: str | None = None,
+) -> dict:
+    """分页查询 usage_logs，支持按模型、token_id、用户名、状态码、日期范围过滤。"""
+    return await _query_logs(
+        session=session,
+        page=page,
+        page_size=page_size,
+        model=model,
+        token_id=token_id,
+        status=status,
+        start_date=start_date,
+        end_date=end_date,
+        username=username,
+    )
 
 
 # ------ 统计接口 ------------------------------------------------------------

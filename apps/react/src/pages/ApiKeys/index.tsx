@@ -67,7 +67,7 @@ const ApiKeys: React.FC = () => {
       dataIndex: 'key',
       render: (key: string) => (
         <Typography.Text copyable={{ text: key }}>
-          {key?.slice(0, 16)}****
+          {key?.slice(0, 8)}****
         </Typography.Text>
       )
     },

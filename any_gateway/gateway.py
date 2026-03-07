@@ -251,6 +251,9 @@ async def find_backend_for_model(
         return channels[-1]
 
     async with AsyncSession(engine, expire_on_commit=False) as session:
+        if not username:
+            return None  # 匿名 token 不允许访问
+
         if username:
             # 1. 获取用户所属分组，按 priority 降序
             stmt = (
@@ -284,19 +287,26 @@ async def find_backend_for_model(
                 chosen = _weighted_choice(supported)
                 return _extract_model_info(chosen, model_name)
 
-            return None  # 所有分组均无此模型
+            # 分组内未找到，仅 _admin_fallback 或 superadmin 允许回退到全局渠道
+            if username != "_admin_fallback":
+                from db.models import AdminUser
+                admin_result = await session.execute(
+                    select(AdminUser).where(AdminUser.username == username)
+                )
+                admin_user = admin_result.scalar_one_or_none()
+                if not (admin_user and admin_user.role == "superadmin"):
+                    return None
 
-        else:
-            # 旧逻辑：遍历所有 enabled 渠道（无分组过滤，向后兼容）
-            result = await session.execute(
-                select(Channel).where(Channel.enabled == True)
-            )
-            channels = result.scalars().all()
-            for channel in channels:
-                info = _extract_model_info(channel, model_name)
-                if info:
-                    return info
-            return None
+        # _admin_fallback / superadmin：遍历所有 enabled 渠道
+        result = await session.execute(
+            select(Channel).where(Channel.enabled == True)
+        )
+        channels = result.scalars().all()
+        for channel in channels:
+            info = _extract_model_info(channel, model_name)
+            if info:
+                return info
+        return None
 
 
 async def forward_streaming_request(
@@ -410,6 +420,7 @@ async def forward_streaming_request(
                     duration_ms=duration_ms,
                     status=response_status or None,
                     is_stream=True,
+                    username=getattr(request.state, "token_username", None),
                 )
             )
             app.state.log_tasks.add(usage_task)
@@ -559,6 +570,7 @@ async def forward_request(
                     duration_ms=duration_ms,
                     status=response.status_code,
                     is_stream=False,
+                    username=getattr(request.state, "token_username", None),
                 )
             )
             request.app.state.log_tasks.add(usage_task)
@@ -638,32 +650,33 @@ async def forward_request(
 @app.get("/v1/models")
 async def list_models():
     """
-    返回所有配置的模型列表（OpenAI 格式）
+    返回所有已启用渠道的模型列表（OpenAI 格式），无需认证
     """
+    from db.models import Channel
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        result = await session.execute(
+            select(Channel).where(Channel.enabled == True)
+        )
+        channels = result.scalars().all()
 
-    if not config:
-        logger.warning("配置文件为空或不存在")
-        return JSONResponse(content={"object": "list", "data": []})
-
-    # 收集所有模型
-    all_models = []
-    for group_name, group_data in config.items():
-        models = group_data.get("models", [])
-        for model in models:
-            model_id = model.get("id") or model.get("name")
-            if model_id:
-                # 构建 OpenAI 格式的模型对象
-                model_obj = {
+    model_set: dict[str, dict] = {}
+    for ch in channels:
+        try:
+            mods: list = json.loads(ch.models or "[]")
+        except Exception:
+            continue
+        for m in mods:
+            model_id = (m.get("id") or m.get("name")) if isinstance(m, dict) else str(m)
+            if model_id and model_id not in model_set:
+                model_set[model_id] = {
                     "id": model_id,
                     "object": "model",
-                    "created": model.get("created", 0),
-                    "owned_by": model.get("owned_by", group_name),
-                    "group": group_name,
+                    "created": 0,
+                    "owned_by": ch.provider or "unknown",
                 }
-                all_models.append(model_obj)
 
+    all_models = list(model_set.values())
     logger.info(f"返回 {len(all_models)} 个模型")
-
     return JSONResponse(content={"object": "list", "data": all_models})
 
 
@@ -866,8 +879,13 @@ async def gateway(request: Request, path: str):
             logger.info(f"Found backend for model {backend_info}")
             body["model"] = model_name
         else:
+            token_username = getattr(request.state, "token_username", None)
+            if not token_username:
+                return JSONResponse(
+                    content={"error": "anonymous token is not allowed"}, status_code=401
+                )
             return JSONResponse(
-                content={"error": "No model name provided"}, status_code=400
+                content={"error": "no available channel for this model"}, status_code=400
             )
 
     else:

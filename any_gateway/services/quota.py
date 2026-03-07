@@ -38,6 +38,7 @@ async def update_usage(
     duration_ms: float,
     status: int | None,
     is_stream: bool,
+    username: str | None = None,
 ) -> None:
     """
     1. 递增 Token.used_usd（通过 SQL 级原子 UPDATE）
@@ -68,6 +69,7 @@ async def update_usage(
                 duration_ms=duration_ms,
                 status=status,
                 is_stream=is_stream,
+                username=username,
             )
             session.add(log)
             await session.commit()
