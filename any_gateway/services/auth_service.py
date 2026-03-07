@@ -196,6 +196,7 @@ async def lazy_create_user(username: str, session: AsyncSession) -> None:
     existing_user = await session.get(User, username)
     if existing_user is None:
         session.add(User(username=username))
+        await session.flush()  # 确保 User 已写入，避免 PG 外键约束失败
 
     # 2. 查找 default 分组
     result = await session.execute(
