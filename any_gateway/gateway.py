@@ -28,6 +28,7 @@ import asyncio
 import random
 import httpx
 import log_writer
+from uuid import uuid4
 
 
 @asynccontextmanager
@@ -318,6 +319,7 @@ async def forward_streaming_request(
     backend_url: str,
     model_name: Optional[str],
     start_time: float,
+    request_id: str,          # 新增
 ) -> StreamingResponse:
     """
     转发流式请求到后端服务并返回 SSE 流式响应。
@@ -400,6 +402,7 @@ async def forward_streaming_request(
                         "is_stream": True,
                         "error": error_message,
                         "token_id": getattr(request.state, "token_id", None),
+                        "request_id": request_id,
                     }
                 )
             )
@@ -421,6 +424,7 @@ async def forward_streaming_request(
                     status=response_status or None,
                     is_stream=True,
                     username=getattr(request.state, "token_username", None),
+                    request_id=request_id,
                 )
             )
             app.state.log_tasks.add(usage_task)
@@ -448,6 +452,7 @@ async def forward_request(
     """
 
     start_time = time.time()
+    request_id = uuid4().hex
 
     # 构建完整的后端 URL
     url = urljoin(backend_url.rstrip("/") + "/", path.lstrip("/"))
@@ -491,7 +496,8 @@ async def forward_request(
     if is_stream_request:
         logger.info("检测到流式请求，使用 SSE 转发")
         return await forward_streaming_request(
-            request, path, url, headers, body, backend_url, model_name, start_time
+            request, path, url, headers, body, backend_url, model_name, start_time,
+            request_id,  # 新增
         )
 
     try:
@@ -551,6 +557,7 @@ async def forward_request(
                         "model_name": model_name,
                         "backend_url": backend_url,
                         "token_id": getattr(request.state, "token_id", None),
+                        "request_id": request_id,
                     }
                 )
             )
@@ -571,6 +578,7 @@ async def forward_request(
                     status=response.status_code,
                     is_stream=False,
                     username=getattr(request.state, "token_username", None),
+                    request_id=request_id,
                 )
             )
             request.app.state.log_tasks.add(usage_task)
@@ -606,6 +614,7 @@ async def forward_request(
                     "model_name": model_name,
                     "backend_url": backend_url,
                     "token_id": getattr(request.state, "token_id", None),
+                    "request_id": request_id,
                 }
             )
         )
@@ -636,6 +645,7 @@ async def forward_request(
                     "model_name": model_name,
                     "backend_url": backend_url,
                     "token_id": getattr(request.state, "token_id", None),
+                    "request_id": request_id,
                 }
             )
         )
