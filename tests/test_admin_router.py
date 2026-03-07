@@ -48,6 +48,7 @@ import asyncio
 def setup_db():
     """创建测试数据库表"""
     async def _create():
+        import db.models  # noqa: F401 - 确保所有表注册到 metadata
         async with TEST_ENGINE.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
 
@@ -64,28 +65,44 @@ def client():
     app.dependency_overrides.clear()
 
 
+@pytest.fixture
+def user_jwt_headers():
+    """生成测试用 JWT 头（user 角色，用于 /user/* 端点）"""
+    from services.auth_service import create_access_token
+    token = create_access_token("test-user", "user")
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def admin_jwt_headers():
+    """生成测试用 JWT 头（admin 角色，用于 /admin/* 端点）"""
+    from services.auth_service import create_access_token
+    token = create_access_token("test-admin", "admin")
+    return {"Authorization": f"Bearer {token}"}
+
+
 # ---------------------------------------------------------------------------
-# 1. 缺少 admin key → 422（Header 必填字段缺失）
+# 1. 缺少认证 → 422（Authorization Header 必填字段缺失）
 # ---------------------------------------------------------------------------
 
 def test_freeze_token_requires_admin_key(client):
-    """未提供 x-admin-key 时，应返回 422（Header 校验失败）"""
-    resp = client.patch("/admin/tokens/nonexistent/freeze", json={"frozen": True})
+    """未提供 Authorization 时，/user/tokens/{id}/freeze 应返回 422"""
+    resp = client.patch("/user/tokens/nonexistent/freeze", json={"frozen": True})
     assert resp.status_code in (422, 403), f"expected 422 or 403, got {resp.status_code}"
 
 
 # ---------------------------------------------------------------------------
-# 2. 错误的 admin key → 403
+# 2. 无效 JWT → 401
 # ---------------------------------------------------------------------------
 
 def test_admin_key_invalid(client):
-    """提供错误 x-admin-key 时，应返回 403"""
+    """提供无效 Bearer token 时，应返回 401"""
     resp = client.patch(
-        "/admin/tokens/nonexistent/freeze",
+        "/user/tokens/nonexistent/freeze",
         json={"frozen": True},
-        headers={"x-admin-key": "wrong-key"},
+        headers={"Authorization": "Bearer invalid-jwt-token"},
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------
@@ -139,17 +156,14 @@ def test_stats_models_structure(client):
 # ---------------------------------------------------------------------------
 
 def test_tokens_list_requires_admin_key(client):
-    """GET /admin/tokens 无 key 应拒绝（422 或 403）"""
-    resp = client.get("/admin/tokens")
-    assert resp.status_code in (422, 403)
+    """GET /user/tokens 无认证应拒绝（422）"""
+    resp = client.get("/user/tokens")
+    assert resp.status_code in (422, 401)
 
 
-def test_tokens_list_with_valid_key(client):
-    """GET /admin/tokens 有效 key 应返回 200"""
-    resp = client.get(
-        "/admin/tokens",
-        headers={"x-admin-key": "test-admin-secret"},
-    )
+def test_tokens_list_with_valid_key(client, user_jwt_headers):
+    """GET /user/tokens 有效 JWT 应返回 200"""
+    resp = client.get("/user/tokens", headers=user_jwt_headers)
     assert resp.status_code == 200
 
 
@@ -157,71 +171,61 @@ def test_tokens_list_with_valid_key(client):
 # 7. 冻结/解冻 Token 测试（先创建再冻结）
 # ---------------------------------------------------------------------------
 
-def _create_token_and_get_id(client, name: str, quota: float = 10.0) -> str:
-    """创建 token 并通过 list 接口获取 id。
-    FastCRUD 0.21 的 create 端点在没有 select_schema 时返回 null，
-    因此通过 list 接口按名称查找 id。
+def _create_token_and_get_id(client, name: str, jwt_headers: dict, quota: float = 10.0) -> str:
+    """创建 token 并返回 id。
+    Token 创建端点在 /user/tokens（POST），需要 JWT 认证。
     """
     create_resp = client.post(
-        "/admin/tokens",
+        "/user/tokens",
         json={"name": name, "quota_usd": quota},
-        headers={"x-admin-key": "test-admin-secret"},
+        headers=jwt_headers,
     )
     assert create_resp.status_code in (200, 201), f"create failed: {create_resp.text}"
-
-    # 通过 list 接口查找刚创建的 token
-    list_resp = client.get(
-        "/admin/tokens",
-        headers={"x-admin-key": "test-admin-secret"},
-    )
-    assert list_resp.status_code == 200
-    items = list_resp.json().get("data", [])
-    for item in items:
-        if item["name"] == name:
-            return item["id"]
-    raise AssertionError(f"Token '{name}' not found in list: {list_resp.json()}")
+    data = create_resp.json()
+    assert "id" in data, f"response has no 'id': {data}"
+    return data["id"]
 
 
-def test_freeze_token_flow(client):
+def test_freeze_token_flow(client, user_jwt_headers):
     """创建 token → 冻结 → 验证 frozen=True"""
-    token_id = _create_token_and_get_id(client, "test-token-freeze")
+    token_id = _create_token_and_get_id(client, "test-token-freeze", user_jwt_headers)
 
     # 冻结
     freeze_resp = client.patch(
-        f"/admin/tokens/{token_id}/freeze",
+        f"/user/tokens/{token_id}/freeze",
         json={"frozen": True},
-        headers={"x-admin-key": "test-admin-secret"},
+        headers=user_jwt_headers,
     )
     assert freeze_resp.status_code == 200, f"freeze failed: {freeze_resp.text}"
     assert freeze_resp.json()["frozen"] is True
 
 
-def test_unfreeze_token_flow(client):
+def test_unfreeze_token_flow(client, user_jwt_headers):
     """创建 token → 冻结 → 解冻 → 验证 frozen=False"""
-    token_id = _create_token_and_get_id(client, "test-token-unfreeze", quota=5.0)
+    token_id = _create_token_and_get_id(client, "test-token-unfreeze", user_jwt_headers, quota=5.0)
 
     # 冻结
     client.patch(
-        f"/admin/tokens/{token_id}/freeze",
+        f"/user/tokens/{token_id}/freeze",
         json={"frozen": True},
-        headers={"x-admin-key": "test-admin-secret"},
+        headers=user_jwt_headers,
     )
 
     # 解冻
     unfreeze_resp = client.patch(
-        f"/admin/tokens/{token_id}/freeze",
+        f"/user/tokens/{token_id}/freeze",
         json={"frozen": False},
-        headers={"x-admin-key": "test-admin-secret"},
+        headers=user_jwt_headers,
     )
     assert unfreeze_resp.status_code == 200
     assert unfreeze_resp.json()["frozen"] is False
 
 
-def test_freeze_nonexistent_token(client):
+def test_freeze_nonexistent_token(client, user_jwt_headers):
     """冻结不存在的 token 应返回 404"""
     resp = client.patch(
-        "/admin/tokens/nonexistent-id/freeze",
+        "/user/tokens/nonexistent-id/freeze",
         json={"frozen": True},
-        headers={"x-admin-key": "test-admin-secret"},
+        headers=user_jwt_headers,
     )
     assert resp.status_code == 404
