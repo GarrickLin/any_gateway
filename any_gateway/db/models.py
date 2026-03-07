@@ -16,7 +16,7 @@ def utcnow() -> str:
 class UserGroupBase(SQLModel):
     name: str = Field(unique=True)
     rpm_limit: int = Field(default=60)
-    tpm_limit: int = Field(default=100000)
+    tpm_limit: int = Field(default=1_000_000)
     priority: int = Field(default=1)
     multiplier: float = Field(default=1.0)
 
@@ -45,6 +45,7 @@ class UserGroupUpdate(SQLModel):
 class TokenBase(SQLModel):
     name: str
     group_id: str | None = Field(default=None, foreign_key="user_groups.id")
+    username: str | None = Field(default=None, foreign_key="users.username")
     quota_usd: float = Field(default=0)
     expires_at: str | None = None
 
@@ -161,3 +162,33 @@ class AdminUser(SQLModel, table=True):
     role: str = Field(default="admin")         # "admin" | "superadmin"
     created_by: str | None = None
     created_at: str = Field(default_factory=utcnow)
+
+
+# =======================
+# User（AD 用户，懒加载）
+# =======================
+
+class User(SQLModel, table=True):
+    __tablename__ = "users"
+    username: str = Field(primary_key=True)
+    created_at: str = Field(default_factory=utcnow)
+
+
+# =======================
+# UserGroupMembership（用户-分组 多对多）
+# =======================
+
+class UserGroupMembership(SQLModel, table=True):
+    __tablename__ = "user_group_memberships"
+    username: str = Field(foreign_key="users.username", primary_key=True)
+    group_id: str = Field(foreign_key="user_groups.id", primary_key=True)
+
+
+# =======================
+# GroupChannel（分组-渠道 多对多）
+# =======================
+
+class GroupChannel(SQLModel, table=True):
+    __tablename__ = "group_channels"
+    group_id: str = Field(foreign_key="user_groups.id", primary_key=True)
+    channel_id: str = Field(foreign_key="channels.id", primary_key=True)
