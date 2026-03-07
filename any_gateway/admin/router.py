@@ -564,3 +564,169 @@ async def demote_user(
     await session.commit()
     logger.info(f"用户 [{username}] 已从 admin_users 删除，操作者：{current_user['username']}")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# 分组-渠道管理路由
+# ---------------------------------------------------------------------------
+
+group_channel_router = APIRouter(
+    prefix="/admin/groups",
+    tags=["Admin: Group Channels"],
+    dependencies=[Depends(require_admin_access)],
+)
+
+
+@group_channel_router.post("/{group_id}/channels/{channel_id}", summary="将渠道加入分组")
+async def add_channel_to_group(
+    group_id: str,
+    channel_id: str,
+    session: AsyncSession = Depends(async_session_generator),
+) -> dict:
+    from db.models import GroupChannel
+    result = await session.execute(
+        select(GroupChannel).where(
+            GroupChannel.group_id == group_id,
+            GroupChannel.channel_id == channel_id,
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        session.add(GroupChannel(group_id=group_id, channel_id=channel_id))
+        await session.commit()
+    return {"group_id": group_id, "channel_id": channel_id, "status": "ok"}
+
+
+@group_channel_router.get("/{group_id}/channels", summary="列出分组下的所有渠道")
+async def list_group_channels(
+    group_id: str,
+    session: AsyncSession = Depends(async_session_generator),
+) -> list:
+    from db.models import GroupChannel, Channel
+    result = await session.execute(
+        select(Channel)
+        .join(GroupChannel, Channel.id == GroupChannel.channel_id)
+        .where(GroupChannel.group_id == group_id)
+    )
+    channels = result.scalars().all()
+    return [
+        {
+            "id": c.id,
+            "name": c.name,
+            "provider": c.provider,
+            "base_url": c.base_url,
+            "enabled": c.enabled,
+            "weight": c.weight,
+        }
+        for c in channels
+    ]
+
+
+@group_channel_router.delete("/{group_id}/channels/{channel_id}", summary="从分组移除渠道")
+async def remove_channel_from_group(
+    group_id: str,
+    channel_id: str,
+    session: AsyncSession = Depends(async_session_generator),
+) -> dict:
+    from db.models import GroupChannel
+    result = await session.execute(
+        select(GroupChannel).where(
+            GroupChannel.group_id == group_id,
+            GroupChannel.channel_id == channel_id,
+        )
+    )
+    gc = result.scalar_one_or_none()
+    if gc is None:
+        raise HTTPException(status_code=404, detail="关联不存在")
+    await session.delete(gc)
+    await session.commit()
+    return {"group_id": group_id, "channel_id": channel_id, "status": "removed"}
+
+
+# ---------------------------------------------------------------------------
+# 用户-分组管理路由
+# ---------------------------------------------------------------------------
+
+user_group_router = APIRouter(
+    prefix="/admin/users-list",
+    tags=["Admin: User Groups"],
+    dependencies=[Depends(require_admin_access)],
+)
+
+
+@user_group_router.get("", summary="列出所有 AD 用户（懒加载记录）")
+async def list_ad_users(
+    session: AsyncSession = Depends(async_session_generator),
+) -> list:
+    from db.models import User
+    result = await session.execute(select(User))
+    users = result.scalars().all()
+    return [{"username": u.username, "created_at": u.created_at} for u in users]
+
+
+@user_group_router.get("/{username}/groups", summary="获取用户所属分组")
+async def get_user_groups_for_user(
+    username: str,
+    session: AsyncSession = Depends(async_session_generator),
+) -> list:
+    from db.models import UserGroup, UserGroupMembership
+    result = await session.execute(
+        select(UserGroup)
+        .join(UserGroupMembership, UserGroup.id == UserGroupMembership.group_id)
+        .where(UserGroupMembership.username == username)
+        .order_by(UserGroup.priority.desc())
+    )
+    groups = result.scalars().all()
+    return [
+        {
+            "id": g.id,
+            "name": g.name,
+            "priority": g.priority,
+            "rpm_limit": g.rpm_limit,
+            "tpm_limit": g.tpm_limit,
+        }
+        for g in groups
+    ]
+
+
+@user_group_router.post("/{username}/groups/{group_id}", summary="将用户加入分组")
+async def add_user_to_group(
+    username: str,
+    group_id: str,
+    session: AsyncSession = Depends(async_session_generator),
+) -> dict:
+    from db.models import User, UserGroupMembership
+
+    if await session.get(User, username) is None:
+        session.add(User(username=username))
+
+    result = await session.execute(
+        select(UserGroupMembership).where(
+            UserGroupMembership.username == username,
+            UserGroupMembership.group_id == group_id,
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        session.add(UserGroupMembership(username=username, group_id=group_id))
+    await session.commit()
+    return {"username": username, "group_id": group_id, "status": "ok"}
+
+
+@user_group_router.delete("/{username}/groups/{group_id}", summary="将用户从分组移除")
+async def remove_user_from_group(
+    username: str,
+    group_id: str,
+    session: AsyncSession = Depends(async_session_generator),
+) -> dict:
+    from db.models import UserGroupMembership
+    result = await session.execute(
+        select(UserGroupMembership).where(
+            UserGroupMembership.username == username,
+            UserGroupMembership.group_id == group_id,
+        )
+    )
+    membership = result.scalar_one_or_none()
+    if membership is None:
+        raise HTTPException(status_code=404, detail="用户不在该分组中")
+    await session.delete(membership)
+    await session.commit()
+    return {"username": username, "group_id": group_id, "status": "removed"}
