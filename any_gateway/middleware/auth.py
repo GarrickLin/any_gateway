@@ -14,7 +14,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
     # 跳过鉴权的路径（精确匹配）
     SKIP_PATHS = {"/health", "/v1/models", "/openapi.json"}
     # 跳过鉴权的路径前缀（/admin/* 有独立的 admin key 验证；/auth/* 使用 JWT 验证）
-    SKIP_PREFIXES = ("/admin", "/docs", "/auth")
+    SKIP_PREFIXES = ("/admin", "/user", "/docs", "/auth")
 
     async def dispatch(self, request: Request, call_next):
         # 1. 跳过不需要鉴权的路径

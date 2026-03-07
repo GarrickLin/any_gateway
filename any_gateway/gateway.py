@@ -15,9 +15,12 @@ from constants import (
 from loguru import logger
 from urllib.parse import urljoin
 from middleware.auth import AuthMiddleware
-from db.database import init_db
+from db.database import init_db, engine
+from db.models import Channel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 from services.quota import check_quota, update_usage
-from admin.router import token_router, channel_router, group_router, admin_router, auth_router, me_router, users_router
+from admin.router import token_router, channel_router, group_router, admin_router, auth_router, me_router, users_router, user_router
 import yaml
 import json
 import time
@@ -127,6 +130,7 @@ app.add_middleware(AuthMiddleware)
 # auth_router 无需 admin key（登录端点本身即鉴权入口）。
 app.include_router(auth_router)
 app.include_router(me_router)
+app.include_router(user_router)
 app.include_router(token_router)
 app.include_router(channel_router)
 app.include_router(group_router)
@@ -184,30 +188,55 @@ async def get_model_info(group_data, model_name):
 
 async def find_backend_for_model(model_name: str) -> Optional[Dict[str, str]]:
     """
-    根据模型名称查找对应的后端地址和 API 密钥，并更新模型名
-    返回: (base_url, api_key) 或 None
+    根据模型名称在数据库 Channel 中查找对应的后端地址和 API 密钥。
+    支持 model_mapping 字段将请求模型名映射为上游模型名。
+    返回: {"base_url", "api_key", "model"} 或 None
     """
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        result = await session.execute(
+            select(Channel).where(Channel.enabled == True)
+        )
+        channels = result.scalars().all()
 
-    config = load_config()
-    group_name = None
-    spliter = ":"
-    if spliter in model_name:
-        splits = model_name.split(spliter)
-        group_name = splits[0]
-        if group_name in config:
-            model_name = spliter.join(splits[1:])
+    for channel in channels:
+        # 解析 models 字段（JSON 字符串，元素可为 str 或 {"id": ...} 对象）
+        channel_models: list = []
+        if channel.models:
+            try:
+                parsed = json.loads(channel.models)
+                if isinstance(parsed, list):
+                    channel_models = parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
 
-    if group_name and group_name in config:
-        group_data = config[group_name]
-        info = await get_model_info(group_data, model_name)
-        if "model" not in info:
-            info["model"] = model_name
-        return info
-    else:
-        for group_data in config.values():
-            if info := await get_model_info(group_data, model_name):
-                if "model" in info:
-                    return info
+        # 解析 model_mapping（{"请求模型名": "上游模型名"}）
+        model_mapping: dict = {}
+        if channel.model_mapping:
+            try:
+                parsed = json.loads(channel.model_mapping)
+                if isinstance(parsed, dict):
+                    model_mapping = parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # 检查该 channel 是否支持此模型
+        model_ids = []
+        for m in channel_models:
+            if isinstance(m, str):
+                model_ids.append(m)
+            elif isinstance(m, dict):
+                model_ids.append(m.get("id") or m.get("name") or "")
+
+        # 也将 model_mapping 的 key 纳入可匹配范围
+        all_supported = set(model_ids) | set(model_mapping.keys())
+
+        if model_name in all_supported:
+            upstream_model = model_mapping.get(model_name, model_name)
+            return {
+                "base_url": channel.base_url,
+                "api_key": channel.api_key,
+                "model": upstream_model,
+            }
 
     return None
 

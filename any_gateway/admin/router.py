@@ -85,21 +85,22 @@ async def require_admin_access(
 # ---------------------------------------------------------------------------
 
 _common_deps = [require_admin_access]
+_user_deps = [require_auth]
 
 token_router: APIRouter = crud_router(
     session=async_session_generator,
     model=Token,
     create_schema=TokenCreate,
     update_schema=TokenUpdate,
-    path="/admin/tokens",
-    tags=["Admin: Tokens"],
+    path="/user/tokens",
+    tags=["User: Tokens"],
     # create 端点单独定义（需返回含 key 的完整 Token）
     deleted_methods=["create"],
-    read_deps=_common_deps,
-    read_multi_deps=_common_deps,
-    update_deps=_common_deps,
-    delete_deps=_common_deps,
-    db_delete_deps=_common_deps,
+    read_deps=_user_deps,
+    read_multi_deps=_user_deps,
+    update_deps=_user_deps,
+    delete_deps=_user_deps,
+    db_delete_deps=_user_deps,
 )
 
 channel_router: APIRouter = crud_router(
@@ -194,17 +195,21 @@ async def get_me(user: dict = Depends(require_auth)) -> dict[str, str]:
     return user
 
 
-admin_router = APIRouter(
-    prefix="/admin",
-    tags=["Admin"],
-    dependencies=[Depends(require_admin_access)],
+# ---------------------------------------------------------------------------
+# 用户路由（任何已登录用户均可访问）
+# ---------------------------------------------------------------------------
+
+user_router = APIRouter(
+    prefix="/user",
+    tags=["User: Tokens"],
+    dependencies=[Depends(require_auth)],
 )
 
 
 # ------ 创建 Token（需返回含 key 的完整记录）-----------------------------------
 
 
-@admin_router.post("/tokens", summary="创建 Token（返回含 key 的完整记录）", response_model=Token)
+@user_router.post("/tokens", summary="创建 Token（返回含 key 的完整记录）", response_model=Token)
 async def create_token(
     body: TokenCreate,
     session: AsyncSession = Depends(async_session_generator),
@@ -229,8 +234,8 @@ class FreezeRequest(BaseModel):
     frozen: bool
 
 
-@admin_router.post("/tokens/{token_id}/freeze", summary="冻结 / 解冻 Token")
-@admin_router.patch("/tokens/{token_id}/freeze", summary="冻结 / 解冻 Token")
+@user_router.post("/tokens/{token_id}/freeze", summary="冻结 / 解冻 Token")
+@user_router.patch("/tokens/{token_id}/freeze", summary="冻结 / 解冻 Token")
 # 同时支持 POST 和 PATCH，POST 用于兼容 spec 要求，PATCH 为 REST 语义
 async def freeze_token(
     token_id: str,
@@ -252,6 +257,17 @@ async def freeze_token(
         raise HTTPException(status_code=500, detail="Failed to retrieve updated token")
     logger.info(f"Token {token_id} frozen={body.frozen}")
     return updated
+
+
+# ---------------------------------------------------------------------------
+# Admin 路由（需要 admin 或 superadmin 角色）
+# ---------------------------------------------------------------------------
+
+admin_router = APIRouter(
+    prefix="/admin",
+    tags=["Admin"],
+    dependencies=[Depends(require_admin_access)],
+)
 
 
 # ------ 从上游拉取模型列表 --------------------------------------------------
@@ -303,6 +319,55 @@ async def fetch_channel_models(
         raise HTTPException(status_code=502, detail=f"上游返回 {e.response.status_code}")
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"连接上游失败: {str(e)}")
+
+
+# ------ 日志查询接口 ---------------------------------------------------------
+
+
+@admin_router.get("/logs", summary="查询请求日志")
+async def list_logs(
+    session: AsyncSession = Depends(async_session_generator),
+    page: int = 1,
+    page_size: int = 20,
+    model: str | None = None,
+    token_id: str | None = None,
+    status: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict:
+    """分页查询 usage_logs，支持按模型、token_id、状态码、日期范围过滤。"""
+    stmt = select(UsageLog)
+
+    if model:
+        stmt = stmt.where(UsageLog.model == model)
+    if token_id:
+        stmt = stmt.where(UsageLog.token_id == token_id)
+    if status:
+        if status >= 500:
+            stmt = stmt.where(UsageLog.status >= 500)
+        elif status >= 400:
+            stmt = stmt.where(UsageLog.status >= 400, UsageLog.status < 500)
+        else:
+            stmt = stmt.where(UsageLog.status == status)
+    if start_date:
+        stmt = stmt.where(UsageLog.created_at >= start_date)
+    if end_date:
+        stmt = stmt.where(UsageLog.created_at <= end_date + "T23:59:59")
+
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total_result = await session.execute(count_stmt)
+    total = total_result.scalar() or 0
+
+    stmt = stmt.order_by(UsageLog.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    result = await session.execute(stmt)
+    rows = list(result.scalars().all())
+
+    return {
+        "data": [row.model_dump() for row in rows],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 # ------ 统计接口 ------------------------------------------------------------
