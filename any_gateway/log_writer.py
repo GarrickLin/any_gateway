@@ -13,7 +13,7 @@ COMPRESS_QUALITY = 6   # brotli 压缩等级，4-6 为速度与压缩率平衡�
 
 # ==================== 路径与日期工具 ====================
 
-def _parse_date_str(timestamp: str) -> str:
+def parse_date_str(timestamp: str) -> str:
     """
     从 ISO 8601 时间戳解析出 YYYY_MM_DD 格式的日期字符串。
     例如: 2026-03-04T08:00:00Z -> 2026_03_04
@@ -114,6 +114,7 @@ async def log_consumer():
 
             if log_data is None:
                 logger.info("日志消费者收到关闭信号")
+                log_queue.task_done()
                 break
 
             try:
@@ -123,10 +124,9 @@ async def log_consumer():
                 if not timestamp_str or not request_id:
                     logger.warning("日志数据缺少 timestamp 或 request_id 字段，跳过")
                 else:
-                    date_str = _parse_date_str(timestamp_str)
+                    date_str = parse_date_str(timestamp_str)
                     if date_str == "unknown":
                         logger.error(f"无法解析时间戳，跳过日志记录: {timestamp_str}")
-                        log_queue.task_done()
                         continue
                     log_file_path = get_request_log_path(request_id, date_str)
                     await write_log(log_file_path, log_data)

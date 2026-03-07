@@ -36,7 +36,7 @@ from db.models import (
     UserGroupCreate,
     UserGroupUpdate,
 )
-from log_writer import get_request_log_path, read_log, _parse_date_str
+from log_writer import get_request_log_path, read_log, parse_date_str
 from services.auth_service import require_auth, require_role, verify_token
 
 # ---------------------------------------------------------------------------
@@ -421,7 +421,7 @@ async def _get_request_messages(request_id: str, session: AsyncSession) -> dict:
     if not log:
         raise HTTPException(status_code=404, detail="日志记录不存在")
 
-    date_str = _parse_date_str(log.created_at)
+    date_str = parse_date_str(log.created_at)
     path = get_request_log_path(request_id, date_str)
     if not path.exists():
         raise HTTPException(status_code=404, detail="消息文件不存在")
