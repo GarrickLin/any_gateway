@@ -58,3 +58,26 @@ def test_load_day_logs_reads_all_requests():
         assert len(logs) == 2
         assert logs[0]["request_id"] == "req1"
         assert logs[1]["request_id"] == "req2"
+
+
+def test_log_consumer_skips_missing_fields():
+    """log_consumer 遇到缺少 request_id 或 timestamp 的日志应跳过，不写文件"""
+    import tempfile
+    from unittest.mock import patch
+
+    async def _run():
+        import log_writer
+        log_writer.log_queue = asyncio.Queue()
+
+        # 入队一条缺少 request_id 的日志
+        await log_writer.log_queue.put({"timestamp": "2026-03-07T10:00:00Z"})
+        # 入队关闭信号
+        await log_writer.log_queue.put(None)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("log_writer.LOG_BASE_DIR", Path(tmpdir)):
+                await log_writer.log_consumer()
+            # 不应有文件被写入
+            assert list(Path(tmpdir).rglob("*.json.br")) == []
+
+    asyncio.run(_run())

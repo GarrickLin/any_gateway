@@ -54,7 +54,7 @@ async def write_log(path: Path, log_data: dict):
     将一条日志写入 brotli 压缩的 JSON 文件。
     Write-once：每个 request_id 对应一个文件，不追加，不加锁。
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     raw = json.dumps(log_data, ensure_ascii=False).encode("utf-8")
     compressed = await loop.run_in_executor(None, _compress, raw)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -130,7 +130,6 @@ async def log_consumer():
                         continue
                     log_file_path = get_request_log_path(request_id, date_str)
                     await write_log(log_file_path, log_data)
-                    logger.debug(f"日志已写入: {log_file_path}")
 
             except Exception as e:
                 logger.error(f"写入日志文件失败: {e}", exc_info=True)
