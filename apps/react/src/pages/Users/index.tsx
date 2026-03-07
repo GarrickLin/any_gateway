@@ -222,11 +222,20 @@ const UserGroupTab: React.FC = () => {
     .map((g) => ({ label: g.name, value: g.id }))
 
   const adUserColumns = [
-    { title: '用户名', dataIndex: 'username' },
-    { title: '显示名', dataIndex: 'display_name', render: (v: string) => v || '-' },
-    { title: '邮箱', dataIndex: 'email', render: (v: string) => v || '-' },
+    {
+      title: '用户名',
+      dataIndex: 'username',
+      key: 'username',
+    },
+    {
+      title: '首次登录',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      render: (val: string) => val ? new Date(val).toLocaleString('zh-CN') : '-',
+    },
     {
       title: '操作',
+      key: 'action',
       render: (_: any, row: any) => (
         <Button size="mini" type="text" onClick={() => openUserGroupModal(row.username)}>
           管理分组
