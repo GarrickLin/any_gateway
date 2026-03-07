@@ -25,6 +25,7 @@ import yaml
 import json
 import time
 import asyncio
+import random
 import httpx
 import log_writer
 
@@ -186,20 +187,22 @@ async def get_model_info(group_data, model_name):
     }
 
 
-async def find_backend_for_model(model_name: str) -> Optional[Dict[str, str]]:
+async def find_backend_for_model(
+    model_name: str,
+    username: str | None = None,
+) -> Optional[Dict[str, str]]:
     """
-    根据模型名称在数据库 Channel 中查找对应的后端地址和 API 密钥。
-    支持 model_mapping 字段将请求模型名映射为上游模型名。
-    返回: {"base_url", "api_key", "model"} 或 None
-    """
-    async with AsyncSession(engine, expire_on_commit=False) as session:
-        result = await session.execute(
-            select(Channel).where(Channel.enabled == True)
-        )
-        channels = result.scalars().all()
+    根据模型名称查找后端渠道。
 
-    for channel in channels:
-        # 解析 models 字段（JSON 字符串，元素可为 str 或 {"id": ...} 对象）
+    路由策略：
+    1. 若 username 不为空，按用户所属分组的 priority 降序查找，
+       在第一个支持该模型的分组内按 weight 加权随机选渠道。
+    2. 若 username 为空，回退到旧逻辑：遍历所有 enabled 渠道。
+    """
+    from db.models import UserGroupMembership, UserGroup, GroupChannel
+
+    def _extract_model_info(channel: Channel, req_model: str) -> Optional[Dict[str, str]]:
+        """从 Channel 对象提取模型路由信息，不支持时返回 None。"""
         channel_models: list = []
         if channel.models:
             try:
@@ -209,7 +212,6 @@ async def find_backend_for_model(model_name: str) -> Optional[Dict[str, str]]:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # 解析 model_mapping（{"请求模型名": "上游模型名"}）
         model_mapping: dict = {}
         if channel.model_mapping:
             try:
@@ -219,7 +221,6 @@ async def find_backend_for_model(model_name: str) -> Optional[Dict[str, str]]:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # 检查该 channel 是否支持此模型
         model_ids = []
         for m in channel_models:
             if isinstance(m, str):
@@ -227,18 +228,73 @@ async def find_backend_for_model(model_name: str) -> Optional[Dict[str, str]]:
             elif isinstance(m, dict):
                 model_ids.append(m.get("id") or m.get("name") or "")
 
-        # 也将 model_mapping 的 key 纳入可匹配范围
         all_supported = set(model_ids) | set(model_mapping.keys())
+        if req_model not in all_supported:
+            return None
 
-        if model_name in all_supported:
-            upstream_model = model_mapping.get(model_name, model_name)
-            return {
-                "base_url": channel.base_url,
-                "api_key": channel.api_key,
-                "model": upstream_model,
-            }
+        upstream_model = model_mapping.get(req_model, req_model)
+        return {"base_url": channel.base_url, "api_key": channel.api_key, "model": upstream_model}
 
-    return None
+    def _weighted_choice(channels: list) -> Optional[Channel]:
+        """按 weight 加权随机选取渠道。"""
+        total = sum(c.weight for c in channels)
+        if total <= 0:
+            return channels[0] if channels else None
+        r = random.uniform(0, total)
+        cumulative = 0.0
+        for c in channels:
+            cumulative += c.weight
+            if r <= cumulative:
+                return c
+        return channels[-1]
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        if username:
+            # 1. 获取用户所属分组，按 priority 降序
+            stmt = (
+                select(UserGroup)
+                .join(UserGroupMembership, UserGroup.id == UserGroupMembership.group_id)
+                .where(UserGroupMembership.username == username)
+                .order_by(UserGroup.priority.desc())
+            )
+            result = await session.execute(stmt)
+            groups = result.scalars().all()
+
+            for group in groups:
+                # 2. 获取该分组下所有 enabled 渠道
+                stmt = (
+                    select(Channel)
+                    .join(GroupChannel, Channel.id == GroupChannel.channel_id)
+                    .where(
+                        GroupChannel.group_id == group.id,
+                        Channel.enabled == True,
+                    )
+                )
+                result = await session.execute(stmt)
+                candidates = result.scalars().all()
+
+                # 3. 过滤支持该模型的渠道
+                supported = [c for c in candidates if _extract_model_info(c, model_name)]
+                if not supported:
+                    continue
+
+                # 4. 加权随机选一个渠道
+                chosen = _weighted_choice(supported)
+                return _extract_model_info(chosen, model_name)
+
+            return None  # 所有分组均无此模型
+
+        else:
+            # 旧逻辑：遍历所有 enabled 渠道（无分组过滤，向后兼容）
+            result = await session.execute(
+                select(Channel).where(Channel.enabled == True)
+            )
+            channels = result.scalars().all()
+            for channel in channels:
+                info = _extract_model_info(channel, model_name)
+                if info:
+                    return info
+            return None
 
 
 async def forward_streaming_request(
@@ -795,7 +851,10 @@ async def gateway(request: Request, path: str):
 
     if model_name:
         # 根据模型名称查找后端配置
-        backend_info = await find_backend_for_model(model_name)
+        backend_info = await find_backend_for_model(
+            model_name,
+            username=getattr(request.state, "token_username", None),
+        )
         if backend_info:
             backend_url, api_key, model_name = (
                 backend_info["base_url"],
