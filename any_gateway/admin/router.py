@@ -310,6 +310,7 @@ async def get_log_messages_user(
     session: AsyncSession = Depends(async_session_generator),
     current_user: dict = Depends(require_auth),
 ):
+    # 1. 先查 DB 做权限校验
     result = await session.execute(select(UsageLog).where(UsageLog.id == request_id))
     log = result.scalar_one_or_none()
     if not log:
@@ -317,14 +318,8 @@ async def get_log_messages_user(
     if log.username != current_user["username"]:
         raise HTTPException(status_code=403, detail="无权访问此日志")
 
-    date_str = _parse_date_str(log.created_at)
-    path = get_request_log_path(request_id, date_str)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="消息文件不存在")
-
-    loop = asyncio.get_running_loop()
-    data = await loop.run_in_executor(None, read_log, path)
-    return data
+    # 2. 权限通过后复用共享读取函数
+    return await _get_request_messages(request_id, session)
 
 
 @user_router.get("/logs", summary="查询当前用户的请求日志")
@@ -500,7 +495,6 @@ async def _query_logs(
 async def get_log_messages_admin(
     request_id: str,
     session: AsyncSession = Depends(async_session_generator),
-    current_user: dict = Depends(require_admin_access),
 ):
     return await _get_request_messages(request_id, session)
 
