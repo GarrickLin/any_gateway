@@ -174,3 +174,44 @@ async def init_superadmin(session: AsyncSession) -> None:
         logger.info(f"超级管理员 [{username}] 已初始化")
     else:
         logger.info(f"超级管理员 [{username}] 已存在（role={existing.role}），跳过")
+
+
+# ---------------------------------------------------------------------------
+# 懒加载用户创建（首次 AD 登录时调用）
+# ---------------------------------------------------------------------------
+
+
+async def lazy_create_user(username: str, session: AsyncSession) -> None:
+    """首次登录时懒加载创建 User 记录并加入 default 分组。
+
+    幂等：若 User 已存在则跳过；若已在 default 分组则不重复加入。
+
+    Args:
+        username: AD 用户名（大小写敏感，与 LDAP 保持一致）。
+        session:  已打开的异步数据库 session。
+    """
+    from db.models import User, UserGroup, UserGroupMembership
+
+    # 1. 确保 User 记录存在
+    existing_user = await session.get(User, username)
+    if existing_user is None:
+        session.add(User(username=username))
+
+    # 2. 查找 default 分组
+    result = await session.execute(
+        select(UserGroup).where(UserGroup.name == "default")
+    )
+    default_group = result.scalar_one_or_none()
+    if default_group is None:
+        logger.warning("default 分组不存在，跳过用户分组加入")
+        return
+
+    # 3. 确保用户在 default 分组中（幂等）
+    result = await session.execute(
+        select(UserGroupMembership).where(
+            UserGroupMembership.username == username,
+            UserGroupMembership.group_id == default_group.id,
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        session.add(UserGroupMembership(username=username, group_id=default_group.id))
