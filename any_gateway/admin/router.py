@@ -186,6 +186,12 @@ async def admin_login(
     else:
         role = await get_user_role(body.username, session)
 
+    # 懒加载：首次登录时创建 User 并加入 default 分组（fallback 用户跳过）
+    if not is_fallback:
+        from services.auth_service import lazy_create_user
+        await lazy_create_user(body.username, session)
+        await session.commit()
+
     token = create_access_token(body.username, role)
     return {"access_token": token, "token_type": "bearer", "role": role}
 
