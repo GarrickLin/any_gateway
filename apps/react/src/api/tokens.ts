@@ -21,13 +21,13 @@ export interface TokenCreate {
 }
 
 export const getTokens = (params?: Record<string, unknown>) =>
-  client.get('/admin/tokens', { params })
+  client.get('/user/tokens', { params })
 
 export const createToken = (data: TokenCreate) =>
-  client.post('/admin/tokens', data)
+  client.post('/user/tokens', data)
 
 export const deleteToken = (id: string) =>
-  client.delete(`/admin/tokens/${id}`)
+  client.delete(`/user/tokens/${id}`)
 
 export const freezeToken = (id: string, frozen: boolean) =>
-  client.post(`/admin/tokens/${id}/freeze`, { frozen })
+  client.post(`/user/tokens/${id}/freeze`, { frozen })

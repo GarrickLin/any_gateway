@@ -17,7 +17,9 @@ const Users: React.FC = () => {
     setLoading(true)
     try {
       const res = await getAdminUsers()
-      setData(res.data || [])
+      setData(Array.isArray(res.data) ? res.data : [])
+    } catch {
+      // 普通用户无权限时静默处理
     } finally {
       setLoading(false)
     }

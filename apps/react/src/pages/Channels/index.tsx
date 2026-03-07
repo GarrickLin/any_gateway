@@ -239,6 +239,7 @@ const Channels: React.FC = () => {
       title: 'Base URL',
       dataIndex: 'base_url',
       key: 'base_url',
+      width: 240,
       ellipsis: true,
     },
     {
@@ -311,7 +312,7 @@ const Channels: React.FC = () => {
   ]
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
       <div
         style={{
           display: 'flex',

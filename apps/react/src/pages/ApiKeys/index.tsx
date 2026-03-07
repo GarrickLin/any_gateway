@@ -17,7 +17,10 @@ const ApiKeys: React.FC = () => {
     setLoading(true)
     try {
       const res = await getTokens()
-      setData(res.data?.data || res.data || [])
+      const raw = res.data?.data ?? res.data
+      setData(Array.isArray(raw) ? raw : [])
+    } catch {
+      Message.error('加载失败')
     } finally {
       setLoading(false)
     }

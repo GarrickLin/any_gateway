@@ -32,15 +32,16 @@ const Chat: React.FC = () => {
   const loadKeys = async () => {
     try {
       const res = await getTokens()
-      const list = res.data?.data || res.data || []
-      setKeys(list)
+      const raw = res.data?.data ?? res.data
+      setKeys(Array.isArray(raw) ? raw : [])
     } catch {}
   }
 
   const loadModels = async () => {
     try {
       const res = await getChannels()
-      const channels = res.data?.data || res.data || []
+      const raw = res.data?.data ?? res.data
+      const channels = Array.isArray(raw) ? raw : []
       const modelSet = new Set<string>()
       channels.forEach((ch: any) => {
         try {
