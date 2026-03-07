@@ -68,5 +68,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.token_group_id = token.get("group_id")
         request.state.quota_usd = token.get("quota_usd", 0)
         request.state.used_usd = token.get("used_usd", 0)
+        request.state.token_username = token.get("username")
 
         return await call_next(request)
