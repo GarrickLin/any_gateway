@@ -229,3 +229,25 @@ def test_freeze_nonexistent_token(client, user_jwt_headers):
         headers=user_jwt_headers,
     )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 8. 消息详情端点测试
+# ---------------------------------------------------------------------------
+
+def test_get_log_messages_admin_not_found(client):
+    """查询不存在的 request_id 应返回 404"""
+    # 获取 admin token（参考文件中已有的认证方式）
+    resp = client.post(
+        "/auth/login",
+        json={"username": "_admin_fallback", "password": os.environ.get("ADMIN_FALLBACK_KEY", "")},
+    )
+    # 如果 fallback 不可用，用 x-admin-key
+    if resp.status_code == 200:
+        token = resp.json()["access_token"]
+        auth_header = {"Authorization": f"Bearer {token}"}
+    else:
+        auth_header = {"x-admin-key": os.environ.get("ADMIN_KEY", "test-admin-secret")}
+
+    resp = client.get("/admin/logs/nonexistent_id_12345/messages", headers=auth_header)
+    assert resp.status_code == 404

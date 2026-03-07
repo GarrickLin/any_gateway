@@ -6,6 +6,7 @@ Admin CRUD API 路由。
 - 所有 /admin/* 路由均需要 x-admin-key Header 校验。
 """
 
+import asyncio
 import json
 import os
 from datetime import datetime, timezone
@@ -35,6 +36,7 @@ from db.models import (
     UserGroupCreate,
     UserGroupUpdate,
 )
+from log_writer import get_request_log_path, read_log, _parse_date_str
 from services.auth_service import require_auth, require_role, verify_token
 
 # ---------------------------------------------------------------------------
@@ -302,6 +304,29 @@ async def freeze_token(
     return updated
 
 
+@user_router.get("/logs/{request_id}/messages", summary="查询请求消息详情（当前用户）")
+async def get_log_messages_user(
+    request_id: str,
+    session: AsyncSession = Depends(async_session_generator),
+    current_user: dict = Depends(require_auth),
+):
+    result = await session.execute(select(UsageLog).where(UsageLog.id == request_id))
+    log = result.scalar_one_or_none()
+    if not log:
+        raise HTTPException(status_code=404, detail="日志记录不存在")
+    if log.username != current_user["username"]:
+        raise HTTPException(status_code=403, detail="无权访问此日志")
+
+    date_str = _parse_date_str(log.created_at)
+    path = get_request_log_path(request_id, date_str)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="消息文件不存在")
+
+    loop = asyncio.get_running_loop()
+    data = await loop.run_in_executor(None, read_log, path)
+    return data
+
+
 @user_router.get("/logs", summary="查询当前用户的请求日志")
 async def list_my_logs(
     session: AsyncSession = Depends(async_session_generator),
@@ -391,6 +416,26 @@ async def fetch_channel_models(
 # ------ 日志查询接口 ---------------------------------------------------------
 
 
+async def _get_request_messages(request_id: str, session: AsyncSession) -> dict:
+    """
+    根据 request_id 从 DB 查 created_at，推导文件路径，读取消息内容。
+    DB 记录或文件不存在时抛出 HTTPException。
+    """
+    result = await session.execute(select(UsageLog).where(UsageLog.id == request_id))
+    log = result.scalar_one_or_none()
+    if not log:
+        raise HTTPException(status_code=404, detail="日志记录不存在")
+
+    date_str = _parse_date_str(log.created_at)
+    path = get_request_log_path(request_id, date_str)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="消息文件不存在")
+
+    loop = asyncio.get_running_loop()
+    data = await loop.run_in_executor(None, read_log, path)
+    return data
+
+
 async def _query_logs(
     session: AsyncSession,
     page: int = 1,
@@ -449,6 +494,15 @@ async def _query_logs(
         "page": page,
         "page_size": page_size,
     }
+
+
+@admin_router.get("/logs/{request_id}/messages", summary="查询请求消息详情（管理员）")
+async def get_log_messages_admin(
+    request_id: str,
+    session: AsyncSession = Depends(async_session_generator),
+    current_user: dict = Depends(require_admin_access),
+):
+    return await _get_request_messages(request_id, session)
 
 
 @admin_router.get("/logs", summary="查询请求日志")
