@@ -583,7 +583,12 @@ async def add_channel_to_group(
     channel_id: str,
     session: AsyncSession = Depends(async_session_generator),
 ) -> dict:
-    from db.models import GroupChannel
+    from db.models import GroupChannel, UserGroup, Channel
+    # 验证分组和渠道存在
+    if await session.get(UserGroup, group_id) is None:
+        raise HTTPException(status_code=404, detail=f"分组 {group_id} 不存在")
+    if await session.get(Channel, channel_id) is None:
+        raise HTTPException(status_code=404, detail=f"渠道 {channel_id} 不存在")
     result = await session.execute(
         select(GroupChannel).where(
             GroupChannel.group_id == group_id,
@@ -694,7 +699,10 @@ async def add_user_to_group(
     group_id: str,
     session: AsyncSession = Depends(async_session_generator),
 ) -> dict:
-    from db.models import User, UserGroupMembership
+    from db.models import User, UserGroupMembership, UserGroup
+    # 验证分组存在
+    if await session.get(UserGroup, group_id) is None:
+        raise HTTPException(status_code=404, detail=f"分组 {group_id} 不存在")
 
     if await session.get(User, username) is None:
         session.add(User(username=username))
