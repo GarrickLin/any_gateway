@@ -92,3 +92,47 @@ def test_user_group_membership_unique_constraint():
         s.add(UserGroupMembership(username="ug-test-user", group_id=gid))
         with pytest.raises(IntegrityError):
             s.commit()
+
+
+def test_init_db_creates_default_group():
+    """init_db 应在启动时幂等地创建 default 分组。"""
+    import asyncio
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.pool import StaticPool
+    from sqlmodel import SQLModel, select
+    import db.database as _db
+    from db.models import UserGroup
+
+    ASYNC_ENGINE = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    async def _run():
+        # 先建表
+        async with ASYNC_ENGINE.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+
+        # 替换 engine，调用 init_db
+        _orig = _db.engine
+        try:
+            _db.engine = ASYNC_ENGINE
+            await _db.init_db()
+            # 幂等：第二次调用不应报错
+            await _db.init_db()
+        finally:
+            _db.engine = _orig
+
+        # 查询 default 分组
+        async with AsyncSession(ASYNC_ENGINE, expire_on_commit=False) as s:
+            result = await s.execute(select(UserGroup).where(UserGroup.name == "default"))
+            return result.scalar_one_or_none()
+
+    grp = asyncio.run(_run())
+    assert grp is not None
+    assert grp.name == "default"
+    assert grp.rpm_limit == 60
+    assert grp.tpm_limit == 1_000_000
+    assert grp.priority == 1
+    assert grp.multiplier == 1.0
