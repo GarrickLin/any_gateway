@@ -999,7 +999,10 @@ if _STATIC_DIR.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str) -> FileResponse:
-        """SPA fallback：所有未匹配的 GET 请求均返回 index.html，由前端路由处理"""
+        """SPA fallback：dist 根目录下存在的静态文件直接返回，否则返回 index.html 由前端路由处理"""
+        file_path = _STATIC_DIR / full_path
+        if file_path.is_file():
+            return FileResponse(file_path)
         return FileResponse(_STATIC_DIR / "index.html")
 
 

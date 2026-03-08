@@ -11,17 +11,15 @@ from loguru import logger
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    # 跳过鉴权的路径（精确匹配）
-    SKIP_PATHS = {"/health", "/v1/models", "/openapi.json"}
-    # 跳过鉴权的路径前缀（/admin/* 有独立的 admin key 验证；/auth/* 使用 JWT 验证）
-    SKIP_PREFIXES = ("/admin", "/user", "/docs", "/auth")
+    # 只有这些前缀需要 API Key 鉴权（其余路径均放行）
+    AUTH_PREFIXES = ("/v1/",)
+    # /v1/models 无需 API Key（公开模型列表）
+    AUTH_SKIP_PATHS = {"/v1/models"}
 
     async def dispatch(self, request: Request, call_next):
-        # 1. 跳过不需要鉴权的路径
-        if request.url.path in self.SKIP_PATHS:
-            return await call_next(request)
-        # 跳过 admin 前缀路径（由 admin router 自行验证 x-admin-key）
-        if request.url.path.startswith(self.SKIP_PREFIXES):
+        # 1. 仅对 /v1/* 路径执行 API Key 鉴权，其余路径各有自己的保护机制或无需鉴权
+        path = request.url.path
+        if path in self.AUTH_SKIP_PATHS or not path.startswith(self.AUTH_PREFIXES):
             return await call_next(request)
 
         # 2. 提取 API Key
