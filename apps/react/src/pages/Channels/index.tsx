@@ -47,24 +47,38 @@ interface Mapping {
   to: string
 }
 
-function parseModelsCount(models: string | null): number {
+function parseMappingKeys(model_mapping: string | null): string[] {
   try {
-    return JSON.parse(models || '[]').length
-  } catch {
-    return 0
-  }
-}
-
-function parseModelIds(models: string | null): string[] {
-  try {
-    const list = JSON.parse(models || '[]')
-    // 支持对象数组（{id: ...}）和字符串数组两种格式
-    return list.map((m: unknown) =>
-      m && typeof m === 'object' && 'id' in m ? String((m as { id: unknown }).id) : String(m)
-    )
+    return Object.keys(JSON.parse(model_mapping || '{}'))
   } catch {
     return []
   }
+}
+
+function parseModelsCount(models: string | null, model_mapping: string | null): number {
+  const mappingCount = parseMappingKeys(model_mapping).length
+  let modelsCount = 0
+  try {
+    modelsCount = JSON.parse(models || '[]').length
+  } catch {
+    // noop
+  }
+  return mappingCount + modelsCount
+}
+
+function parseModelIds(models: string | null, model_mapping: string | null): string[] {
+  const result = new Set<string>(parseMappingKeys(model_mapping))
+  try {
+    const list = JSON.parse(models || '[]')
+    // 支持对象数组（{id: ...}）和字符串数组两种格式
+    for (const m of list) {
+      const id = m && typeof m === 'object' && 'id' in m ? String((m as { id: unknown }).id) : String(m)
+      result.add(id)
+    }
+  } catch {
+    // noop
+  }
+  return Array.from(result)
 }
 
 function parseMappings(model_mapping: string | null): Mapping[] {
@@ -130,12 +144,26 @@ const Channels: React.FC = () => {
   const handleSubmit = async () => {
     try {
       const values = await form.validate()
+
+      // 校验 mapping 规则完整性
+      for (const m of mappings) {
+        if (!m.from.trim() || !m.to.trim()) {
+          Message.error('映射规则的 from 和 to 均不能为空')
+          return
+        }
+      }
+      const froms = mappings.map((m) => m.from.trim())
+      if (new Set(froms).size !== froms.length) {
+        Message.error('映射规则中存在重复的 from 模型名')
+        return
+      }
+
       setSubmitting(true)
 
       // 构建 model_mapping JSON
       const mappingObj: Record<string, string> = {}
       mappings.forEach((m) => {
-        if (m.from) mappingObj[m.from] = m.to
+        mappingObj[m.from.trim()] = m.to.trim()
       })
       const model_mapping = JSON.stringify(mappingObj)
 
@@ -266,7 +294,7 @@ const Channels: React.FC = () => {
       width: 80,
       align: 'center',
       render: (models: string | null, record: Channel) => {
-        const count = parseModelsCount(models)
+        const count = parseModelsCount(models, record.model_mapping)
         if (count === 0) return <span style={{ color: '#999' }}>0</span>
         return (
           <Typography.Text
@@ -358,7 +386,7 @@ const Channels: React.FC = () => {
             padding: '4px 0',
           }}
         >
-          {parseModelIds(viewModelsChannel?.models ?? null).map((id) => (
+          {parseModelIds(viewModelsChannel?.models ?? null, viewModelsChannel?.model_mapping ?? null).map((id) => (
             <Tag key={id} color="arcoblue" style={{ marginBottom: 0 }}>
               {id}
             </Tag>

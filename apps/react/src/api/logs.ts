@@ -18,6 +18,12 @@ export const getLogs = (params?: LogsFilter) =>
 export const getMyLogs = (params?: LogsFilter) =>
   client.get('/user/logs', { params })
 
+export const getLogMessages = (requestId: string) =>
+  client.get(`/admin/logs/${requestId}/messages`)
+
+export const getMyLogMessages = (requestId: string) =>
+  client.get(`/user/logs/${requestId}/messages`)
+
 export const getStatsOverview = () =>
   client.get('/admin/stats/overview')
 
