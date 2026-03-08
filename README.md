@@ -2,6 +2,10 @@
 
 A self-hosted AI API gateway that proxies requests to multiple backend providers (OpenAI, Anthropic, Gemini) with user management, quota control, and audit logging.
 
+![](docs/imgs/snapshot1.png)
+![](docs/imgs/snapshot2.png)
+![](docs/imgs/snapshot3.png)
+
 ## Features
 
 - **Multi-provider routing** — Supports OpenAI-compatible, Anthropic, and Gemini APIs with automatic protocol detection

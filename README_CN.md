@@ -2,6 +2,10 @@
 
 自托管 AI API 网关，将请求代理到多个后端 AI 提供商（OpenAI、Anthropic、Gemini），并提供用户管理、配额控制和审计日志功能。
 
+![](docs/imgs/snapshot1.png)
+![](docs/imgs/snapshot2.png)
+![](docs/imgs/snapshot3.png)
+
 ## 功能特性
 
 - **多提供商路由** — 支持 OpenAI 兼容、Anthropic、Gemini 协议，自动识别请求格式
