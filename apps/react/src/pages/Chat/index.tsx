@@ -3,26 +3,36 @@ import {
   Select, Button, Input, Typography, Space, Message
 } from '@arco-design/web-react'
 import { getTokens } from '../../api/tokens'
+import { useAuthStore } from '../../store/auth'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
 }
 
+const ANTHROPIC_VERSION = '2023-06-01'
+const ANTHROPIC_MAX_TOKENS = 4096
+
 const Chat: React.FC = () => {
-  const [keys, setKeys] = useState<any[]>([])
-  const [models, setModels] = useState<string[]>([])
+  const [keys, setKeys] = useState<{ name: string; key: string }[]>([])
+  const [allModels, setAllModels] = useState<string[]>([])
+  const [providers, setProviders] = useState<string[]>([])
+  const [providerModelMap, setProviderModelMap] = useState<Record<string, string[]>>({})
   const [selectedKey, setSelectedKey] = useState('')
+  const [selectedProvider, setSelectedProvider] = useState<string | undefined>(undefined)
   const [selectedModel, setSelectedModel] = useState('')
   const [history, setHistory] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
+  const isAnthropic = selectedProvider?.toLowerCase() === 'anthropic'
+  const jwtToken = useAuthStore(s => s.token)
+
   useEffect(() => {
     loadKeys()
     loadModels()
-  }, [])
+  }, [jwtToken])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -32,22 +42,66 @@ const Chat: React.FC = () => {
     try {
       const res = await getTokens()
       const raw = res.data?.data ?? res.data
-      setKeys(Array.isArray(raw) ? raw.filter((k: any) => !k.frozen) : [])
-    } catch {}
+      setKeys(Array.isArray(raw) ? raw.filter((k: { frozen?: boolean }) => !k.frozen) : [])
+    } catch {
+      // noop
+    }
   }
 
   const loadModels = async () => {
     try {
-      const res = await fetch('/v1/models')
+      const res = await fetch('/v1/models', {
+        headers: jwtToken ? { Authorization: `Bearer ${jwtToken}` } : {},
+      })
       const json = await res.json()
-      const data: any[] = json.data ?? []
-      setModels(data.map((m: any) => m.id).filter(Boolean))
-    } catch {}
+      const data: { id?: string; owned_by?: string }[] = json.data ?? []
+      const models = data.map(m => m.id).filter(Boolean) as string[]
+      setAllModels(models)
+
+      // 从 owned_by 字段构建 provider→model 映射，无需访问 admin 端点
+      const map: Record<string, Set<string>> = {}
+      for (const m of data) {
+        if (!m.id || !m.owned_by) continue
+        if (!map[m.owned_by]) map[m.owned_by] = new Set()
+        map[m.owned_by].add(m.id)
+      }
+      const result: Record<string, string[]> = {}
+      for (const [p, set] of Object.entries(map)) {
+        result[p] = Array.from(set)
+      }
+      setProviderModelMap(result)
+      setProviders(Object.keys(result).sort())
+    } catch {
+      // noop
+    }
   }
 
+  const filteredModels = selectedProvider
+    ? (providerModelMap[selectedProvider] ?? [])
+    : allModels
+
   const curlCommand = selectedKey && selectedModel
-    ? `curl http://localhost:8003/v1/chat/completions \\\n  -H "Authorization: Bearer ${selectedKey}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${selectedModel}", "messages": [{"role": "user", "content": "你好"}], "stream": true}'`
+    ? isAnthropic
+      ? `curl http://localhost:8003/v1/messages \\\n  -H "x-api-key: ${selectedKey}" \\\n  -H "Content-Type: application/json" \\\n  -H "anthropic-version: ${ANTHROPIC_VERSION}" \\\n  -d '{"model": "${selectedModel}", "messages": [{"role": "user", "content": "你好"}], "max_tokens": ${ANTHROPIC_MAX_TOKENS}, "stream": true}'`
+      : `curl http://localhost:8003/v1/chat/completions \\\n  -H "Authorization: Bearer ${selectedKey}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${selectedModel}", "messages": [{"role": "user", "content": "你好"}], "stream": true}'`
     : '# 请先选择 API Key 和模型'
+
+  const updateLastAssistant = (content: string) => {
+    setHistory(prev => {
+      const updated = [...prev]
+      updated[updated.length - 1] = { role: 'assistant', content }
+      return updated
+    })
+  }
+
+  const removeEmptyLastAssistant = () => {
+    setHistory(prev => {
+      if (prev.length > 0 && prev[prev.length - 1].role === 'assistant' && prev[prev.length - 1].content === '') {
+        return prev.slice(0, -1)
+      }
+      return prev
+    })
+  }
 
   const handleSend = async () => {
     if (!input.trim() || !selectedKey || !selectedModel) {
@@ -58,61 +112,111 @@ const Chat: React.FC = () => {
     setInput('')
     setSending(true)
 
+    const userMsg: ChatMessage = { role: 'user', content }
+    const messages = [...history, userMsg]
+    setHistory([...messages, { role: 'assistant', content: '' }])
+
     try {
-      const userMsg: ChatMessage = { role: 'user', content }
-      const messages = [...history, userMsg]
-      setHistory([...messages, { role: 'assistant', content: '' }])
-
-      const response = await fetch('/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${selectedKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ model: selectedModel, messages, stream: true }),
-      })
-
-      if (!response.ok) {
-        Message.error(`请求失败：${response.status} ${response.statusText}`)
-        setHistory(prev => prev.slice(0, -1))
-        return
+      if (isAnthropic) {
+        await sendAnthropic(messages)
+      } else {
+        await sendOpenAI(messages)
       }
-
-      const reader = response.body!.getReader()
-      const decoder = new TextDecoder()
-      let assistantContent = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        const chunk = decoder.decode(value)
-        const lines = chunk.split('\n').filter(l => l.startsWith('data: '))
-        for (const line of lines) {
-          const data = line.slice(6)
-          if (data === '[DONE]') continue
-          try {
-            const json = JSON.parse(data)
-            const delta = json.choices?.[0]?.delta?.content || ''
-            assistantContent += delta
-            setHistory(prev => {
-              const updated = [...prev]
-              updated[updated.length - 1] = { role: 'assistant', content: assistantContent }
-              return updated
-            })
-          } catch {}
-        }
-      }
-    } catch (err) {
+    } catch {
       Message.error('请求出错，请检查网络和配置')
-      setHistory(prev => {
-        const updated = [...prev]
-        if (updated.length > 0 && updated[updated.length - 1].role === 'assistant' && updated[updated.length - 1].content === '') {
-          return updated.slice(0, -1)
-        }
-        return updated
-      })
+      removeEmptyLastAssistant()
     } finally {
       setSending(false)
+    }
+  }
+
+  const sendOpenAI = async (messages: ChatMessage[]) => {
+    const response = await fetch('/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${selectedKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ model: selectedModel, messages, stream: true }),
+    })
+    if (!response.ok) {
+      Message.error(`请求失败：${response.status} ${response.statusText}`)
+      setHistory(prev => prev.slice(0, -1))
+      return
+    }
+    let assistantContent = ''
+    await readSSE(response, (line) => {
+      if (!line.startsWith('data: ')) return
+      const data = line.slice(6)
+      if (data === '[DONE]') return
+      try {
+        const json = JSON.parse(data)
+        if (json.error) {
+          const code = json.error.code != null ? `[${json.error.code}] ` : ''
+          assistantContent = `${code}${json.error.message ?? JSON.stringify(json.error)}`
+          updateLastAssistant(assistantContent)
+          return
+        }
+        assistantContent += json.choices?.[0]?.delta?.content ?? ''
+        updateLastAssistant(assistantContent)
+      } catch {
+        // noop
+      }
+    })
+  }
+
+  const sendAnthropic = async (messages: ChatMessage[]) => {
+    const response = await fetch('/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': selectedKey,
+        'Content-Type': 'application/json',
+        'anthropic-version': ANTHROPIC_VERSION,
+      },
+      body: JSON.stringify({
+        model: selectedModel,
+        messages,
+        max_tokens: ANTHROPIC_MAX_TOKENS,
+        stream: true,
+      }),
+    })
+    if (!response.ok) {
+      Message.error(`请求失败：${response.status} ${response.statusText}`)
+      setHistory(prev => prev.slice(0, -1))
+      return
+    }
+    let assistantContent = ''
+    await readSSE(response, (line) => {
+      if (!line.startsWith('data: ')) return
+      const data = line.slice(6)
+      try {
+        const json = JSON.parse(data)
+        if (json.error) {
+          const code = json.error.code != null ? `[${json.error.code}] ` : ''
+          assistantContent = `${code}${json.error.message ?? JSON.stringify(json.error)}`
+          updateLastAssistant(assistantContent)
+          return
+        }
+        if (json.type === 'content_block_delta' && json.delta?.type === 'text_delta') {
+          assistantContent += json.delta.text ?? ''
+          updateLastAssistant(assistantContent)
+        }
+      } catch {
+        // noop
+      }
+    })
+  }
+
+  const readSSE = async (response: Response, onLine: (line: string) => void) => {
+    const reader = response.body!.getReader()
+    const decoder = new TextDecoder()
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      const chunk = decoder.decode(value)
+      for (const line of chunk.split('\n')) {
+        if (line.trim()) onLine(line)
+      }
     }
   }
 
@@ -125,14 +229,23 @@ const Chat: React.FC = () => {
           <Select
             placeholder="选择 API Key"
             options={keys.map(k => ({ label: k.name, value: k.key }))}
-            onChange={(v) => {
-              setSelectedKey(v)
-            }}
+            onChange={(v) => setSelectedKey(v)}
             style={{ width: 200 }}
           />
           <Select
+            placeholder="按 Provider 筛选"
+            allowClear
+            options={providers.map(p => ({ label: p, value: p }))}
+            onChange={(v) => {
+              setSelectedProvider(v)
+              setSelectedModel('')
+            }}
+            style={{ width: 160 }}
+          />
+          <Select
             placeholder="选择模型"
-            options={models.map(m => ({ label: m, value: m }))}
+            value={selectedModel || undefined}
+            options={filteredModels.map(m => ({ label: m, value: m }))}
             onChange={setSelectedModel}
             showSearch
             style={{ width: 240 }}
@@ -190,7 +303,9 @@ const Chat: React.FC = () => {
       {/* 右侧 curl 面板 */}
       <div style={{ width: 360, background: '#1e1e1e', borderRadius: 8, padding: 16, display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-          <Typography.Text style={{ color: '#fff' }}>curl 命令</Typography.Text>
+          <Typography.Text style={{ color: '#fff' }}>
+            {isAnthropic ? 'curl（Anthropic Messages）' : 'curl（OpenAI Chat）'}
+          </Typography.Text>
           <Button
             size="mini"
             onClick={() => {
