@@ -1,5 +1,5 @@
 from fastapi.responses import Response, JSONResponse, StreamingResponse, FileResponse
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
@@ -18,8 +18,9 @@ from middleware.auth import AuthMiddleware
 from db.database import init_db, engine
 from db.models import Channel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import select, col
 from services.quota import check_quota, update_usage
+from services.auth_service import require_auth
 from admin.router import token_router, channel_router, group_router, admin_router, auth_router, me_router, users_router, user_router, group_channel_router, user_group_router
 import yaml
 import json
@@ -227,16 +228,17 @@ async def find_backend_for_model(
         model_ids = []
         for m in channel_models:
             if isinstance(m, str):
-                model_ids.append(m)
+                model_ids.append(m.removeprefix("models/"))
             elif isinstance(m, dict):
-                model_ids.append(m.get("id") or m.get("name") or "")
+                raw = m.get("id") or m.get("name") or ""
+                model_ids.append(raw.removeprefix("models/"))
 
         all_supported = set(model_ids) | set(model_mapping.keys())
         if req_model not in all_supported:
             return None
 
         upstream_model = model_mapping.get(req_model, req_model)
-        return {"base_url": channel.base_url, "api_key": channel.api_key, "model": upstream_model}
+        return {"base_url": channel.base_url, "api_key": channel.api_key, "model": upstream_model, "provider": channel.provider or ""}
 
     def _weighted_choice(channels: list) -> Optional[Channel]:
         """按 weight 加权随机选取渠道。"""
@@ -286,7 +288,9 @@ async def find_backend_for_model(
 
                 # 4. 加权随机选一个渠道
                 chosen = _weighted_choice(supported)
-                return _extract_model_info(chosen, model_name)
+                info = _extract_model_info(chosen, model_name)
+                info["has_conflict"] = len(supported) > 1
+                return info
 
             # 分组内未找到，仅 _admin_fallback 或 superadmin 允许回退到全局渠道
             if username != "_admin_fallback":
@@ -306,6 +310,7 @@ async def find_backend_for_model(
         for channel in channels:
             info = _extract_model_info(channel, model_name)
             if info:
+                info["has_conflict"] = False
                 return info
         return None
 
@@ -443,7 +448,7 @@ async def forward_streaming_request(
 
 
 async def forward_request(
-    request: Request, path: str, backend_url: str, api_key: Optional[str] = None
+    request: Request, path: str, backend_url: str, api_key: Optional[str] = None, provider: str = "", has_conflict: bool = False
 ) -> Response:
     """
     转发请求到后端服务并返回响应。
@@ -469,12 +474,33 @@ async def forward_request(
     headers.pop("host", None)
     headers.pop("content-length", None)
 
-    # 如果提供了 api_key，覆盖 Authorization header
+    # 如果提供了 api_key，按协议覆盖认证头
+    # 冲突时（多个渠道支持同一模型）优先根据请求路径末段判断认证格式，避免 provider 标注不一致导致错误
+    # 无冲突时直接信任 provider 字段
     if api_key:
         headers.pop("authorization", None)
         headers.pop("Authorization", None)
         headers.pop("x-api-key", None)
-        headers["Authorization"] = f"Bearer {api_key}"
+        headers.pop("x-goog-api-key", None)
+        # 取路径末段（去掉查询参数和版本前缀，如 /v1/、/v1beta/ 等）
+        clean_path = path.split("?")[0]
+        if has_conflict:
+            if clean_path.endswith("/messages") or clean_path == "messages":
+                headers["x-api-key"] = api_key
+                headers.setdefault("anthropic-version", "2023-06-01")
+            elif provider.lower() == "gemini":
+                headers["x-goog-api-key"] = api_key
+            else:
+                # chat/completions 及其他 OpenAI 兼容端点
+                headers["Authorization"] = f"Bearer {api_key}"
+        else:
+            if provider.lower() == "anthropic":
+                headers["x-api-key"] = api_key
+                headers.setdefault("anthropic-version", "2023-06-01")
+            elif provider.lower() == "gemini":
+                headers["x-goog-api-key"] = api_key
+            else:
+                headers["Authorization"] = f"Bearer {api_key}"
 
     logger.info(f"Request body: {body[:200] if body else ''}")
     logger.info(f"Request headers: {headers}")
@@ -658,35 +684,78 @@ async def forward_request(
 
 # 模型列表 API
 @app.get("/v1/models")
-async def list_models():
+async def list_models(current_user: dict = Depends(require_auth)):
     """
-    返回所有已启用渠道的模型列表（OpenAI 格式），无需认证
+    返回当前用户所在分组的所有可用模型列表（OpenAI 格式）。
+    superadmin 可查看全部 enabled 渠道的模型。
     """
-    from db.models import Channel
-    async with AsyncSession(engine, expire_on_commit=False) as session:
-        result = await session.execute(
-            select(Channel).where(Channel.enabled == True)
-        )
-        channels = result.scalars().all()
+    from db.models import Channel, UserGroupMembership, GroupChannel
 
-    model_set: dict[str, dict] = {}
-    for ch in channels:
+    username = current_user["username"]
+    role = current_user["role"]
+
+    def _extract_models(ch: Channel) -> list[dict]:
+        provider = ch.provider or "unknown"
+        entries: dict[str, dict] = {}
+
+        # models 字段
         try:
             mods: list = json.loads(ch.models or "[]")
         except Exception:
-            continue
+            mods = []
         for m in mods:
-            model_id = (m.get("id") or m.get("name")) if isinstance(m, dict) else str(m)
-            if model_id and model_id not in model_set:
-                model_set[model_id] = {
-                    "id": model_id,
-                    "object": "model",
-                    "created": 0,
-                    "owned_by": ch.provider or "unknown",
-                }
+            mid = (m.get("id") or m.get("name")) if isinstance(m, dict) else str(m)
+            if mid:
+                mid = mid.removeprefix("models/")  # 兼容 Gemini 原始格式
+                entries[mid] = {"id": mid, "object": "model", "created": 0, "owned_by": provider}
+
+        # model_mapping 的 from 键（用户侧别名）覆盖或补充
+        try:
+            mapping: dict = json.loads(ch.model_mapping or "{}")
+        except Exception:
+            mapping = {}
+        for alias in mapping:
+            if alias:
+                entries[alias] = {"id": alias, "object": "model", "created": 0, "owned_by": provider}
+
+        return list(entries.values())
+
+    model_set: dict[str, dict] = {}
+
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        # superadmin：查全部 enabled 渠道
+        if role in ("admin", "superadmin"):
+            result = await session.execute(
+                select(Channel).where(Channel.enabled == True)
+            )
+            channels = result.scalars().all()
+        else:
+            # 普通用户：查所在分组的 enabled 渠道（去重）
+            stmt = (
+                select(Channel)
+                .join(GroupChannel, col(Channel.id) == col(GroupChannel.channel_id))
+                .join(UserGroupMembership, col(GroupChannel.group_id) == col(UserGroupMembership.group_id))
+                .where(
+                    UserGroupMembership.username == username,
+                    col(Channel.enabled) == True,
+                )
+                .distinct()
+            )
+            result = await session.execute(stmt)
+            channels = result.scalars().all()
+
+        # 在 session 关闭前提取模型数据，避免 expire_on_close 导致属性不可访问
+        # 按 (id, owned_by) 去重：同一模型 ID 可在不同 provider 下各出现一次
+        seen: set[tuple[str, str]] = set()
+        for ch in channels:
+            for entry in _extract_models(ch):
+                key = (entry["id"], entry["owned_by"])
+                if key not in seen:
+                    seen.add(key)
+                    model_set[key] = entry
 
     all_models = list(model_set.values())
-    logger.info(f"返回 {len(all_models)} 个模型")
+    logger.info(f"用户 [{username}] 查询模型列表，返回 {len(all_models)} 个模型")
     return JSONResponse(content={"object": "list", "data": all_models})
 
 
@@ -873,6 +942,7 @@ async def gateway(request: Request, path: str):
     # 尝试从请求体中提取模型名称
     model_name = body.get("model")
     api_key = None
+    backend_provider = ""
 
     if model_name:
         # 根据模型名称查找后端配置
@@ -881,10 +951,12 @@ async def gateway(request: Request, path: str):
             username=getattr(request.state, "token_username", None),
         )
         if backend_info:
-            backend_url, api_key, model_name = (
+            backend_url, api_key, model_name, backend_provider, has_conflict = (
                 backend_info["base_url"],
                 backend_info["api_key"],
                 backend_info["model"],
+                backend_info.get("provider", ""),
+                backend_info.get("has_conflict", False),
             )
             logger.info(f"Found backend for model {backend_info}")
             body["model"] = model_name
@@ -910,7 +982,7 @@ async def gateway(request: Request, path: str):
 
     new_request = RequestWithBody(request.scope, request.receive)
 
-    return await forward_request(new_request, path, backend_url, api_key)
+    return await forward_request(new_request, path, backend_url, api_key, backend_provider, has_conflict)
 
 
 # --------------------------------------------------------------------------- #

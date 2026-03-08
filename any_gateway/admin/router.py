@@ -373,14 +373,37 @@ async def fetch_channel_models(
         raise HTTPException(status_code=404, detail="Channel not found")
 
     # 向上游拉取模型
-    models_url = f"{channel['base_url'].rstrip('/')}/models"
-    headers = {"Authorization": f"Bearer {channel['api_key']}"}
+    provider = (channel.get("provider") or "").lower()
+    base = channel["base_url"].rstrip("/")
+
+    # 各协议的模型列表端点路径
+    if provider == "anthropic" and not base.endswith("/v1"):
+        models_url = f"{base}/v1/models"
+    elif provider == "gemini" and "/v1" not in base:
+        models_url = f"{base}/v1beta/models"
+    else:
+        models_url = f"{base}/models"
+
+    # 各协议的认证头
+    if provider == "anthropic":
+        headers = {
+            "x-api-key": channel["api_key"],
+            "anthropic-version": "2023-06-01",
+        }
+    elif provider == "gemini":
+        headers = {"x-goog-api-key": channel["api_key"]}
+    else:
+        headers = {"Authorization": f"Bearer {channel['api_key']}"}
+
+    logger.info(f"fetch-models → {models_url}  provider={provider}")
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(models_url, headers=headers)
             resp.raise_for_status()
             data = resp.json()
+
+        logger.info(f"fetch-models 响应 keys={list(data.keys()) if isinstance(data, dict) else type(data)}")
 
         # 支持 OpenAI 格式（data 字段）和其他格式
         if "data" in data:
@@ -389,12 +412,32 @@ async def fetch_channel_models(
             models = data["models"]
         else:
             models = []
+            logger.warning(f"fetch-models 未识别的响应格式，raw={str(data)[:300]}")
+
+        if not models:
+            logger.warning(f"fetch-models 返回空模型列表，channel={channel_id}")
+
+        # Gemini 原生格式规范化：name="models/gemini-xxx"，过滤仅支持 generateContent 的模型
+        if provider == "gemini":
+            normalized = []
+            for m in models:
+                if not isinstance(m, dict):
+                    continue
+                methods = m.get("supportedGenerationMethods") or []
+                if "generateContent" not in methods:
+                    continue
+                model_id = (m.get("name") or "").removeprefix("models/")
+                if model_id:
+                    normalized.append({"id": model_id, "object": "model", "created": 0, "owned_by": "gemini"})
+            models = normalized
 
         # 截断过大的模型列表
         MAX_MODELS = 500
         if len(models) > MAX_MODELS:
             logger.warning(f"Channel {channel_id} 返回 {len(models)} 个模型，截断至 {MAX_MODELS}")
             models = models[:MAX_MODELS]
+
+        logger.info(f"fetch-models 保存 {len(models)} 个模型到 channel={channel_id}")
 
         # 存储为 JSON string
         models_json = json.dumps(models, ensure_ascii=False)
@@ -403,7 +446,9 @@ async def fetch_channel_models(
         return {"ok": True, "count": len(models), "models": models}
 
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=502, detail=f"上游返回 {e.response.status_code}")
+        body = e.response.text[:300]
+        logger.error(f"fetch-models 上游错误 {e.response.status_code}: {body}")
+        raise HTTPException(status_code=502, detail=f"上游返回 {e.response.status_code}: {body}")
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"连接上游失败: {str(e)}")
 
