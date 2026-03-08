@@ -54,8 +54,13 @@ const Layout: React.FC = () => {
           onClickMenuItem={(key) => navigate(`/${key}`)}
           style={{ border: 'none' }}
         >
+          {isAdmin && (
+            <MenuItem key="dashboard">
+              <IconDashboard /> 仪表板
+            </MenuItem>
+          )}
           <MenuItem key="apikeys">
-            <IconLock /> API Keys
+            <IconLock /> API 密钥
           </MenuItem>
           <MenuItem key="chat">
             <IconMessage /> 对话
@@ -66,13 +71,10 @@ const Layout: React.FC = () => {
           {isAdmin && (
             <>
               <MenuItem key="groups">
-                <IconApps /> Groups
+                <IconApps /> 分组
               </MenuItem>
               <MenuItem key="channels">
-                <IconSettings /> Channels
-              </MenuItem>
-              <MenuItem key="dashboard">
-                <IconDashboard /> Dashboard
+                <IconSettings /> 渠道
               </MenuItem>
             </>
           )}

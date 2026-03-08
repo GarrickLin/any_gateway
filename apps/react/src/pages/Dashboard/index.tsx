@@ -17,6 +17,7 @@ interface Overview {
 
 interface TokenStat {
   token_id: string
+  username: string | null
   total_cost_usd: number
   request_count: number
 }
@@ -55,7 +56,7 @@ const Dashboard: React.FC = () => {
   const maxModelCount = models[0]?.request_count ?? 1
 
   const tokenColumns = [
-    { title: 'Token ID', dataIndex: 'token_id', render: (v: string) => v ?? '—' },
+    { title: '用户名', dataIndex: 'username', render: (v: string) => v ?? '—' },
     { title: '请求数', dataIndex: 'request_count', width: 100 },
     {
       title: '费用 (USD)',

@@ -150,6 +150,7 @@ const ApiKeys: React.FC = () => {
         {/* <p style={{ color: '#ff7d00', marginBottom: 8 }}>请立即复制，此 Key 仅显示一次！</p> */}
         <Typography.Text
           copyable={{
+            text: newKey,
             onCopy: () => Message.success('已复制到剪贴板')
           }}
           style={{ wordBreak: 'break-all' }}

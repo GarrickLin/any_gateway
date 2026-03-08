@@ -39,10 +39,17 @@ const Login: React.FC = () => {
         justifyContent: 'center',
         alignItems: 'center',
         height: '100vh',
-        background: '#f0f2f5',
+        backgroundImage: 'url(/background.png)',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
       }}
     >
-      <Card style={{ width: 360 }} title="Any Gateway 登录">
+      <Card style={{ width: 360, backdropFilter: 'blur(4px)', background: 'rgba(255,255,255,0.88)' }} title={
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <img src="/icon.png" alt="logo" style={{ width: 24, height: 24, borderRadius: 4 }} />
+          <span>Any Gateway 登录</span>
+        </div>
+      }>
         <Form form={form} onSubmit={handleSubmit} layout="vertical">
           <Form.Item
             field="username"
