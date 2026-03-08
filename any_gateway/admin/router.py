@@ -581,6 +581,7 @@ class OverviewResponse(BaseModel):
 
 class TokenStatsItem(BaseModel):
     token_id: str | None
+    username: str | None
     total_cost_usd: float
     request_count: int
 
@@ -624,11 +625,12 @@ async def stats_tokens(
     stmt = (
         select(
             UsageLog.token_id,
+            UsageLog.username,
             func.coalesce(func.sum(UsageLog.cost_usd), 0).label("total_cost_usd"),
             func.count(UsageLog.id).label("request_count"),
         )
         .where(UsageLog.created_at.like(f"{today}%"))
-        .group_by(UsageLog.token_id)
+        .group_by(UsageLog.token_id, UsageLog.username)
         .order_by(func.sum(UsageLog.cost_usd).desc())
         .limit(10)
     )
@@ -637,6 +639,7 @@ async def stats_tokens(
     return [
         TokenStatsItem(
             token_id=row.token_id,
+            username=row.username,
             total_cost_usd=float(row.total_cost_usd),
             request_count=int(row.request_count),
         )
