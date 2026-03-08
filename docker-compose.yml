@@ -13,7 +13,7 @@ services:
       - ./data:/app/data
     environment:
       - ADMIN_KEY=${ADMIN_KEY}
-      - LDAP_SERVER_URL=${LDAP_SERVER_URL:-}
+      - LDAP_SERVER_URL=ldap://mock-ad:1389
       - LDAP_BASE_DN=${LDAP_BASE_DN:-}
       - LDAP_DOMAIN=${LDAP_DOMAIN:-}
       - ADMIN_FALLBACK_KEY=${ADMIN_FALLBACK_KEY}

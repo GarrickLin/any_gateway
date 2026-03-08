@@ -1,5 +1,4 @@
 loguru
-streamlit
 pydantic
 fastapi
 aiofiles
@@ -10,5 +9,8 @@ ldap3
 sqlmodel
 fastcrud
 uvicorn
-st_copy
+pyyaml
 python-jose[cryptography]
+
+# streamlit
+# st_copy
