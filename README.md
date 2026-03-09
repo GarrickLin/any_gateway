@@ -19,6 +19,27 @@ A self-hosted AI API gateway that proxies requests to multiple backend providers
 - **React admin dashboard** — Full-featured SPA for managing channels, groups, users, and tokens
 - **Streaming support** — SSE pass-through for streaming AI responses
 
+## Design Highlights
+
+### 1. Modern Development Efficiency (SQLModel + FastCRUD)
+The backend uses **SQLModel**, a modern Python ORM that combines SQLAlchemy's database capabilities with Pydantic's data validation, providing strong typing and concise code. Paired with **FastCRUD**, boilerplate CRUD code is greatly reduced, letting developers focus on routing and quota logic.
+
+### 2. Concurrency Optimized for AI Workloads (Asyncio + HTTPX)
+- **Async proxy:** Uses **httpx** with FastAPI's native async support to efficiently handle large volumes of concurrent AI API requests without blocking.
+- **Non-blocking audit logging:** An **asyncio queue (3-consumer pattern)** prevents log writes from becoming a bottleneck under high concurrency. Requests return immediately while **Brotli compression** and file writes happen asynchronously in the background, eliminating file lock contention.
+
+### 3. Enterprise-grade Security (LDAP + RBAC)
+- **Authentication:** LDAP/AD integration via **ldap3** plugs directly into existing Active Directory infrastructure — no user re-registration required, meeting enterprise security compliance requirements.
+- **Permission model:** JWT-based RBAC via **python-jose** with clear separation between `user`, `admin`, and `superadmin` roles.
+
+### 4. Frontend State and Performance (React 19 + Zustand)
+- **Latest frontend standards:** Built with **React 19** and **Vite** for fast development feedback and optimized production load times.
+- **Lightweight state management:** Uses **Zustand** instead of Redux — its minimal API and high performance are ideal for managing complex admin dashboard state such as channel configs and real-time quota displays.
+
+### 5. Storage and Archiving Design
+- **Storage flexibility:** Supports seamless migration from lightweight **SQLite** to production-grade **PostgreSQL**, scaling from personal testing to team deployments.
+- **Compressed archiving:** Logs are sharded by day and token, and compressed with **Brotli** — offering higher compression ratios than Gzip, making it efficient for storing large volumes of JSON AI conversation logs.
+
 ## Architecture
 
 ```
