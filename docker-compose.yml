@@ -6,14 +6,15 @@ services:
     restart: unless-stopped
 
   gateway:
+    container_name: any-gateway
     build: .
     ports:
-      - "8003:8003"
+      - "${GATEWAY_PORT:-8003}:8003"
     volumes:
       - ./data:/app/data
     environment:
       - ADMIN_KEY=${ADMIN_KEY}
-      - LDAP_SERVER_URL=ldap://mock-ad:1389
+      - LDAP_SERVER_URL=${LDAP_SERVER_URL:-ldap://mock-ad:1389}
       - LDAP_BASE_DN=${LDAP_BASE_DN:-}
       - LDAP_DOMAIN=${LDAP_DOMAIN:-}
       - ADMIN_FALLBACK_KEY=${ADMIN_FALLBACK_KEY}
@@ -21,7 +22,7 @@ services:
       - SUPERADMIN_USERNAME=${SUPERADMIN_USERNAME:-superadmin}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:${GATEWAY_PORT:-8003}/health" ]
       interval: 30s
       timeout: 10s
       start_period: 15s

@@ -25,12 +25,12 @@ COPY --from=frontend-builder /frontend/dist ./apps/react/dist
 
 ENV PYTHONPATH=/app/any_gateway
 
+# Create data directory for SQLite database and logs
+RUN mkdir -p /app/data
+
 EXPOSE 8003
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:8003/health || exit 1
-
-RUN addgroup --system appuser && adduser --system --ingroup appuser appuser
-USER appuser
 
 CMD ["python", "-m", "uvicorn", "gateway:app", "--host", "0.0.0.0", "--port", "8003", "--app-dir", "any_gateway"]

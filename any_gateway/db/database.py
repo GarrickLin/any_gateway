@@ -7,6 +7,11 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, select
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./data/gateway.db")
+
+if "sqlite" in DATABASE_URL:
+    _db_path = DATABASE_URL.split("///")[-1]
+    Path(_db_path).parent.mkdir(parents=True, exist_ok=True)
+
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
@@ -22,10 +27,6 @@ async def async_session_generator() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db():
     """在 FastAPI lifespan 启动时调用，自动建表（如表已存在则跳过）"""
-    # 确保数据目录存在（仅对 sqlite:/// 路径有意义）
-    if "sqlite" in DATABASE_URL:
-        db_path = DATABASE_URL.split("///")[-1]
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
 
