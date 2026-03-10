@@ -20,7 +20,7 @@ from db.models import Channel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select, col
 from services.quota import check_quota, update_usage
-from services.auth_service import require_auth
+from services.auth_service import require_auth, optional_require_auth
 from admin.router import token_router, channel_router, group_router, admin_router, auth_router, me_router, users_router, user_router, group_channel_router, user_group_router
 import yaml
 import json
@@ -194,14 +194,16 @@ async def get_model_info(group_data, model_name):
 async def find_backend_for_model(
     model_name: str,
     username: str | None = None,
+    group_id: str | None = None,
 ) -> Optional[Dict[str, str]]:
     """
     根据模型名称查找后端渠道。
 
     路由策略：
-    1. 若 username 不为空，按用户所属分组的 priority 降序查找，
+    1. 若 group_id 不为空，直接在该分组的渠道中按 weight 加权随机选取，跳过用户组查找。
+    2. 若 username 不为空，按用户所属分组的 priority 降序查找，
        在第一个支持该模型的分组内按 weight 加权随机选渠道。
-    2. 若 username 为空，回退到旧逻辑：遍历所有 enabled 渠道。
+    3. 其余情况，回退到旧逻辑：_admin_fallback / superadmin 遍历所有 enabled 渠道。
     """
     from db.models import UserGroupMembership, UserGroup, GroupChannel
 
@@ -254,53 +256,72 @@ async def find_backend_for_model(
         return channels[-1]
 
     async with AsyncSession(engine, expire_on_commit=False) as session:
+        # 策略 1：token 绑定了特定分组，直接路由
+        if group_id:
+            stmt = (
+                select(Channel)
+                .join(GroupChannel, Channel.id == GroupChannel.channel_id)
+                .where(
+                    GroupChannel.group_id == group_id,
+                    Channel.enabled == True,
+                )
+            )
+            result = await session.execute(stmt)
+            candidates = result.scalars().all()
+            supported = [c for c in candidates if _extract_model_info(c, model_name)]
+            if not supported:
+                return None
+            chosen = _weighted_choice(supported)
+            info = _extract_model_info(chosen, model_name)
+            info["has_conflict"] = len(supported) > 1
+            return info
+
         if not username:
             return None  # 匿名 token 不允许访问
 
-        if username:
-            # 1. 获取用户所属分组，按 priority 降序
+        # 1. 获取用户所属分组，按 priority 降序
+        stmt = (
+            select(UserGroup)
+            .join(UserGroupMembership, UserGroup.id == UserGroupMembership.group_id)
+            .where(UserGroupMembership.username == username)
+            .order_by(UserGroup.priority.desc())
+        )
+        result = await session.execute(stmt)
+        groups = result.scalars().all()
+
+        for group in groups:
+            # 2. 获取该分组下所有 enabled 渠道
             stmt = (
-                select(UserGroup)
-                .join(UserGroupMembership, UserGroup.id == UserGroupMembership.group_id)
-                .where(UserGroupMembership.username == username)
-                .order_by(UserGroup.priority.desc())
+                select(Channel)
+                .join(GroupChannel, Channel.id == GroupChannel.channel_id)
+                .where(
+                    GroupChannel.group_id == group.id,
+                    Channel.enabled == True,
+                )
             )
             result = await session.execute(stmt)
-            groups = result.scalars().all()
+            candidates = result.scalars().all()
 
-            for group in groups:
-                # 2. 获取该分组下所有 enabled 渠道
-                stmt = (
-                    select(Channel)
-                    .join(GroupChannel, Channel.id == GroupChannel.channel_id)
-                    .where(
-                        GroupChannel.group_id == group.id,
-                        Channel.enabled == True,
-                    )
-                )
-                result = await session.execute(stmt)
-                candidates = result.scalars().all()
+            # 3. 过滤支持该模型的渠道
+            supported = [c for c in candidates if _extract_model_info(c, model_name)]
+            if not supported:
+                continue
 
-                # 3. 过滤支持该模型的渠道
-                supported = [c for c in candidates if _extract_model_info(c, model_name)]
-                if not supported:
-                    continue
+            # 4. 加权随机选一个渠道
+            chosen = _weighted_choice(supported)
+            info = _extract_model_info(chosen, model_name)
+            info["has_conflict"] = len(supported) > 1
+            return info
 
-                # 4. 加权随机选一个渠道
-                chosen = _weighted_choice(supported)
-                info = _extract_model_info(chosen, model_name)
-                info["has_conflict"] = len(supported) > 1
-                return info
-
-            # 分组内未找到，仅 _admin_fallback 或 superadmin 允许回退到全局渠道
-            if username != "_admin_fallback":
-                from db.models import AdminUser
-                admin_result = await session.execute(
-                    select(AdminUser).where(AdminUser.username == username)
-                )
-                admin_user = admin_result.scalar_one_or_none()
-                if not (admin_user and admin_user.role == "superadmin"):
-                    return None
+        # 分组内未找到，仅 _admin_fallback 或 superadmin 允许回退到全局渠道
+        if username != "_admin_fallback":
+            from db.models import AdminUser
+            admin_result = await session.execute(
+                select(AdminUser).where(AdminUser.username == username)
+            )
+            admin_user = admin_result.scalar_one_or_none()
+            if not (admin_user and admin_user.role == "superadmin"):
+                return None
 
         # _admin_fallback / superadmin：遍历所有 enabled 渠道
         result = await session.execute(
@@ -358,28 +379,52 @@ async def forward_streaming_request(
                         f"Streaming response started: status={response_status}, content-type={response_headers.get('content-type')}"
                     )
 
-                    # 逐行读取并转发
-                    async for line in response.aiter_lines():
-                        chunk_data = line + "\n"
-                        accumulated_chunks.append(chunk_data)
-                        yield chunk_data.encode("utf-8")
+                    # 上游返回 4xx/5xx：读取错误体并包装为 SSE error 事件
+                    if response_status >= 400:
+                        error_body_parts: list[str] = []
+                        async for line in response.aiter_lines():
+                            error_body_parts.append(line)
+                        error_body = "\n".join(error_body_parts)
+                        accumulated_chunks.append(error_body)
 
-                    logger.info(
-                        f"Streaming completed: {len(accumulated_chunks)} chunks received"
-                    )
+                        try:
+                            error_json = json.loads(error_body)
+                            # 标准化为 {"error": {"message": ..., "code": ...}}
+                            if "error" not in error_json:
+                                error_json = {"error": {"message": str(error_json), "code": response_status}}
+                            elif isinstance(error_json["error"], str):
+                                error_json = {"error": {"message": error_json["error"], "code": response_status}}
+                        except Exception:
+                            # 非 JSON 响应（如 nginx HTML 502 页面）：只传状态码，不传原始 HTML
+                            error_json = {"error": {"message": f"上游服务异常 (HTTP {response_status})", "code": response_status}}
+
+                        error_message = error_json["error"].get("message", "") if isinstance(error_json.get("error"), dict) else str(error_json.get("error"))
+                        logger.warning(f"Streaming upstream error {response_status}: {error_message}")
+                        error_chunk = f"data: {json.dumps(error_json, ensure_ascii=False)}\n\n"
+                        accumulated_chunks.append(error_chunk)
+                        yield error_chunk.encode("utf-8")
+                    else:
+                        # 逐行读取并转发
+                        async for line in response.aiter_lines():
+                            chunk_data = line + "\n"
+                            accumulated_chunks.append(chunk_data)
+                            yield chunk_data.encode("utf-8")
+
+                        logger.info(
+                            f"Streaming completed: {len(accumulated_chunks)} chunks received"
+                        )
 
         except httpx.RequestError as e:
             error_message = f"Request error: {str(e)}"
             logger.error(f"Streaming error: {error_message}")
-            # 透传错误给客户端
-            error_chunk = f"data: {json.dumps({'error': error_message})}\n\n"
+            error_chunk = f"data: {json.dumps({'error': {'message': error_message, 'code': 0}})}\n\n"
             accumulated_chunks.append(error_chunk)
             yield error_chunk.encode("utf-8")
 
         except Exception as e:
             error_message = f"Unexpected error: {str(e)}"
             logger.error(f"Streaming error: {error_message}")
-            error_chunk = f"data: {json.dumps({'error': error_message})}\n\n"
+            error_chunk = f"data: {json.dumps({'error': {'message': error_message, 'code': 0}})}\n\n"
             accumulated_chunks.append(error_chunk)
             yield error_chunk.encode("utf-8")
 
@@ -684,21 +729,33 @@ async def forward_request(
 
 # 模型列表 API
 @app.get("/v1/models")
-async def list_models(current_user: dict = Depends(require_auth)):
+async def list_models(
+    request: Request,
+    current_user: Optional[dict] = Depends(optional_require_auth),
+):
     """
-    返回当前用户所在分组的所有可用模型列表（OpenAI 格式）。
-    superadmin 可查看全部 enabled 渠道的模型。
+    返回可用模型列表（OpenAI 格式）。
+
+    认证优先级：
+    1. API Key（由 middleware 注入 request.state.token_group_id / token_username）
+       - token_group_id 有值 → 只返回该 group 的模型
+       - token_username 有值（无 group 绑定）→ 返回该用户所在所有分组的模型
+    2. JWT → 原有逻辑（admin/superadmin 看全部，普通用户看所在分组）
+    3. 两者都无 → 401
     """
     from db.models import Channel, UserGroupMembership, GroupChannel
 
-    username = current_user["username"]
-    role = current_user["role"]
+    # 从 middleware 注入的 API Key token 信息
+    token_group_id: str | None = getattr(request.state, "token_group_id", None)
+    token_username: str | None = getattr(request.state, "token_username", None)
+    api_key_authed = getattr(request.state, "api_key_authed", False)
+
+    if not api_key_authed and not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     def _extract_models(ch: Channel) -> list[dict]:
         provider = ch.provider or "unknown"
         entries: dict[str, dict] = {}
-
-        # models 字段
         try:
             mods: list = json.loads(ch.models or "[]")
         except Exception:
@@ -706,10 +763,8 @@ async def list_models(current_user: dict = Depends(require_auth)):
         for m in mods:
             mid = (m.get("id") or m.get("name")) if isinstance(m, dict) else str(m)
             if mid:
-                mid = mid.removeprefix("models/")  # 兼容 Gemini 原始格式
+                mid = mid.removeprefix("models/")
                 entries[mid] = {"id": mid, "object": "model", "created": 0, "owned_by": provider}
-
-        # model_mapping 的 from 键（用户侧别名）覆盖或补充
         try:
             mapping: dict = json.loads(ch.model_mapping or "{}")
         except Exception:
@@ -717,26 +772,30 @@ async def list_models(current_user: dict = Depends(require_auth)):
         for alias in mapping:
             if alias:
                 entries[alias] = {"id": alias, "object": "model", "created": 0, "owned_by": provider}
-
         return list(entries.values())
 
-    model_set: dict[str, dict] = {}
+    async def _channels_by_username(session, uname: str):
+        stmt = (
+            select(Channel)
+            .join(GroupChannel, col(Channel.id) == col(GroupChannel.channel_id))
+            .join(UserGroupMembership, col(GroupChannel.group_id) == col(UserGroupMembership.group_id))
+            .where(
+                UserGroupMembership.username == uname,
+                col(Channel.enabled) == True,
+            )
+            .distinct()
+        )
+        result = await session.execute(stmt)
+        return result.scalars().all()
 
     async with AsyncSession(engine, expire_on_commit=False) as session:
-        # superadmin：查全部 enabled 渠道
-        if role in ("admin", "superadmin"):
-            result = await session.execute(
-                select(Channel).where(Channel.enabled == True)
-            )
-            channels = result.scalars().all()
-        else:
-            # 普通用户：查所在分组的 enabled 渠道（去重）
+        if api_key_authed and token_group_id:
+            # 策略 1：token 绑定了特定分组，只返回该组模型
             stmt = (
                 select(Channel)
                 .join(GroupChannel, col(Channel.id) == col(GroupChannel.channel_id))
-                .join(UserGroupMembership, col(GroupChannel.group_id) == col(UserGroupMembership.group_id))
                 .where(
-                    UserGroupMembership.username == username,
+                    GroupChannel.group_id == token_group_id,
                     col(Channel.enabled) == True,
                 )
                 .distinct()
@@ -744,18 +803,32 @@ async def list_models(current_user: dict = Depends(require_auth)):
             result = await session.execute(stmt)
             channels = result.scalars().all()
 
-        # 在 session 关闭前提取模型数据，避免 expire_on_close 导致属性不可访问
-        # 按 (id, owned_by) 去重：同一模型 ID 可在不同 provider 下各出现一次
-        seen: set[tuple[str, str]] = set()
+        elif api_key_authed and token_username:
+            # 策略 2：token 有 username，按用户所在分组
+            channels = await _channels_by_username(session, token_username)
+
+        else:
+            # 策略 3：JWT 认证
+            # current_user is guaranteed non-None by the 401 guard above (if not api_key_authed and not current_user)
+            username = current_user["username"]
+            role = current_user["role"]
+            if role in ("admin", "superadmin"):
+                result = await session.execute(
+                    select(Channel).where(Channel.enabled == True)
+                )
+                channels = result.scalars().all()
+            else:
+                channels = await _channels_by_username(session, username)
+
+        model_set: dict[tuple, dict] = {}
         for ch in channels:
             for entry in _extract_models(ch):
-                key = (entry["id"], entry["owned_by"])
-                if key not in seen:
-                    seen.add(key)
-                    model_set[key] = entry
+                entry_key = (entry["id"], entry["owned_by"])
+                if entry_key not in model_set:
+                    model_set[entry_key] = entry
 
     all_models = list(model_set.values())
-    logger.info(f"用户 [{username}] 查询模型列表，返回 {len(all_models)} 个模型")
+    logger.info(f"模型列表查询：{len(all_models)} 个模型")
     return JSONResponse(content={"object": "list", "data": all_models})
 
 
@@ -949,6 +1022,7 @@ async def gateway(request: Request, path: str):
         backend_info = await find_backend_for_model(
             model_name,
             username=getattr(request.state, "token_username", None),
+            group_id=getattr(request.state, "token_group_id", None),
         )
         if backend_info:
             backend_url, api_key, model_name, backend_provider, has_conflict = (

@@ -9,6 +9,7 @@ JWT 认证服务。
 
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from fastapi import Depends, Header, HTTPException
 from jose import JWTError, jwt
@@ -179,6 +180,24 @@ async def init_superadmin(session: AsyncSession) -> None:
 # ---------------------------------------------------------------------------
 # 懒加载用户创建（首次 AD 登录时调用）
 # ---------------------------------------------------------------------------
+
+
+async def optional_require_auth(
+    authorization: Optional[str] = Header(default=None),
+) -> Optional[dict]:
+    """尝试从 Authorization Bearer header 验证 JWT，失败或缺失时返回 None（不抛异常）。"""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    token_str = authorization[len("Bearer "):]
+    try:
+        payload = verify_token(token_str)
+    except JWTError:
+        return None
+    username = payload.get("sub")
+    if not username:
+        return None
+    role = payload.get("role", "user")
+    return {"username": username, "role": role}
 
 
 async def lazy_create_user(username: str, session: AsyncSession) -> None:

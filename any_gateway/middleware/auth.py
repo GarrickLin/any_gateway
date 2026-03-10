@@ -11,56 +11,30 @@ from loguru import logger
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    # 只有这些前缀需要 API Key 鉴权（其余路径均放行）
     AUTH_PREFIXES = ("/v1/",)
-    # /v1/models 无需 API Key（公开模型列表）
-    AUTH_SKIP_PATHS = {"/v1/models"}
+    # 可选 API Key 路径：无 key → 放行；有效 key → 注入；无效 key → 401（快速失败）
+    AUTH_OPTIONAL_KEY_PATHS = {"/v1/models"}
 
-    async def dispatch(self, request: Request, call_next):
-        # 1. 仅对 /v1/* 路径执行 API Key 鉴权，其余路径各有自己的保护机制或无需鉴权
-        path = request.url.path
-        if path in self.AUTH_SKIP_PATHS or not path.startswith(self.AUTH_PREFIXES):
-            return await call_next(request)
+    @staticmethod
+    def _extract_key(headers) -> str | None:
+        """
+        从请求头提取 API Key，优先级：
+        1. x-api-key（OpenAI / Anthropic 风格）
+        2. x-goog-api-key（Gemini 风格）
+        3. Authorization: Bearer <key>
+        """
+        if key := headers.get("x-api-key"):
+            return key
+        if key := headers.get("x-goog-api-key"):
+            return key
+        auth = headers.get("authorization", "")
+        bearer = auth.removeprefix("Bearer ").strip()
+        return bearer or None
 
-        # 2. 提取 API Key
-        # 优先 x-api-key header，其次 Authorization: Bearer xxx
-        auth_header = request.headers.get("authorization", "")
-        bearer_key = auth_header.removeprefix("Bearer").strip()
-        key = request.headers.get("x-api-key") or bearer_key
-        if not key:
-            return JSONResponse({"error": "missing api key"}, status_code=401)
-
-        # 3. 查询数据库验证 Token
-        # 每请求查一次 SQLite（无缓存）。团队内部工具，用户数有限，YAGNI。
-        # 若未来 QPS 提升，可用 TTLCache 对 key→token_dict 做 60s 短暂缓存。
-        try:
-            async with AsyncSession(engine, expire_on_commit=False) as session:
-                crud = FastCRUD(Token)
-                token = await crud.get(session, key=key)
-        except Exception as e:
-            logger.error(f"Auth DB error: {e}")
-            return JSONResponse({"error": "service unavailable"}, status_code=503)
-
-        if not token:
-            return JSONResponse({"error": "invalid api key"}, status_code=401)
-        if token.get("frozen", False):
-            return JSONResponse({"error": "api key is frozen"}, status_code=401)
-
-        # 4. 检查过期时间
-        if token.get("expires_at"):
-            expires_at_str = token["expires_at"]
-            try:
-                # 处理 ISO 8601 格式（含 Z 后缀）
-                expires_dt = datetime.fromisoformat(
-                    expires_at_str.replace("Z", "+00:00")
-                )
-                if datetime.now(timezone.utc) > expires_dt:
-                    return JSONResponse({"error": "api key expired"}, status_code=401)
-            except ValueError:
-                logger.error(f"expires_at 格式异常，拒绝请求: {expires_at_str!r}")
-                return JSONResponse({"error": "invalid token"}, status_code=401)
-
-        # 5. 注入 token 信息到 request.state
+    @staticmethod
+    def _inject_token_state(request: Request, token: dict) -> None:
+        """将已验证的 token 信息注入 request.state。"""
+        request.state.api_key_authed = True  # sentinel for downstream handlers
         request.state.token_id = token["id"]
         request.state.token_name = token["name"]
         request.state.token_group_id = token.get("group_id")
@@ -68,4 +42,74 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.used_usd = token.get("used_usd", 0)
         request.state.token_username = token.get("username")
 
+    @staticmethod
+    async def _validate_key(key: str) -> tuple[dict | None, str, int]:
+        """
+        查询并验证 API Key。
+        返回 (token_dict, error_msg, status_code)：
+          - 成功：(token, "", 200)
+          - 失败：(None, "error message", 401/503)
+        """
+        try:
+            async with AsyncSession(engine, expire_on_commit=False) as session:
+                crud = FastCRUD(Token)
+                token = await crud.get(session, key=key)
+        except Exception as e:
+            logger.error(f"Auth DB error: {e}")
+            return None, "service unavailable", 503
+
+        if not token:
+            return None, "invalid api key", 401
+        if token.get("frozen", False):
+            return None, "api key is frozen", 401
+        if token.get("expires_at"):
+            try:
+                expires_dt = datetime.fromisoformat(
+                    token["expires_at"].replace("Z", "+00:00")
+                )
+                if datetime.now(timezone.utc) > expires_dt:
+                    return None, "api key expired", 401
+            except ValueError:
+                logger.error(f"expires_at 格式异常，拒绝请求: {token['expires_at']!r}")
+                return None, "invalid token", 401
+        return token, "", 200
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+
+        # 非 /v1/* 路径完全放行
+        if not path.startswith(self.AUTH_PREFIXES):
+            return await call_next(request)
+
+        # 可选 API Key 路径（如 /v1/models）
+        if path in self.AUTH_OPTIONAL_KEY_PATHS:
+            # 只检查专用 API Key headers，Authorization Bearer 保留给 endpoint 的 JWT 认证
+            api_key = (
+                request.headers.get("x-api-key")
+                or request.headers.get("x-goog-api-key")
+            )
+            if api_key:
+                token, error_msg, status_code = await self._validate_key(api_key)
+                if token is None:
+                    return JSONResponse({"error": error_msg}, status_code=status_code)
+                self._inject_token_state(request, token)
+            # 无专用 key → 放行，由 endpoint 处理 JWT 认证
+            # 注意：当前 endpoint 使用 Header(...) 强制依赖，缺失时 FastAPI 返回 422；
+            # 统一转换为 401，避免调用方收到不明确的 422。
+            # Task 2 修改 endpoint 为可选认证后，此转换可移除。
+            response = await call_next(request)
+            if response.status_code == 422:
+                return JSONResponse({"error": "authentication required"}, status_code=401)
+            return response
+
+        # 必须有 API Key 的路径（/v1/* 其余路径）
+        key = self._extract_key(request.headers)
+        if not key:
+            return JSONResponse({"error": "missing api key"}, status_code=401)
+
+        token, error_msg, status_code = await self._validate_key(key)
+        if token is None:
+            return JSONResponse({"error": error_msg}, status_code=status_code)
+
+        self._inject_token_state(request, token)
         return await call_next(request)

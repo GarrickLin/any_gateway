@@ -71,6 +71,7 @@ class TokenCreate(TokenBase):
 
 class TokenUpdate(SQLModel):
     name: str | None = None
+    group_id: str | None = None
     quota_usd: float | None = None
     expires_at: str | None = None
     frozen: bool | None = None
@@ -107,6 +108,7 @@ class ChannelCreate(ChannelBase):
 
 class ChannelUpdate(SQLModel):
     name: str | None = None
+    provider: str | None = None
     base_url: str | None = None
     api_key: str | None = None
     weight: int | None = None

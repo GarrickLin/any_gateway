@@ -322,6 +322,16 @@ async def get_log_messages_user(
     return await _get_request_messages(request_id, session)
 
 
+@user_router.get("/groups", summary="列出所有可用分组（供 Token 绑定选择）")
+async def list_groups_for_user(
+    session: AsyncSession = Depends(async_session_generator),
+) -> list[dict]:
+    """返回所有分组的 id 和 name，供创建/编辑 Token 时选择绑定分组。"""
+    result = await session.execute(select(UserGroup).order_by(UserGroup.name.asc()))
+    groups = result.scalars().all()
+    return [{"id": g.id, "name": g.name} for g in groups]
+
+
 @user_router.get("/logs", summary="查询当前用户的请求日志")
 async def list_my_logs(
     session: AsyncSession = Depends(async_session_generator),
