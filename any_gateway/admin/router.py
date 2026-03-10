@@ -203,6 +203,30 @@ async def get_me(user: dict = Depends(require_auth)) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# 统计响应模型（user_router 和 admin_router 共用）
+# ---------------------------------------------------------------------------
+
+
+class OverviewResponse(BaseModel):
+    total_cost_usd: float
+    request_count: int
+    date: str
+
+
+class TokenStatsItem(BaseModel):
+    token_id: str | None
+    username: str | None
+    token_name: str | None
+    total_cost_usd: float
+    request_count: int
+
+
+class ModelStatsItem(BaseModel):
+    model: str | None
+    request_count: int
+
+
+# ---------------------------------------------------------------------------
 # 用户路由（任何已登录用户均可访问）
 # ---------------------------------------------------------------------------
 
@@ -354,6 +378,99 @@ async def list_my_logs(
         end_date=end_date,
         username=current_user["username"],
     )
+
+
+
+@user_router.get("/stats/overview", summary="今日整体统计（当前用户）")
+async def user_stats_overview(
+    session: AsyncSession = Depends(async_session_generator),
+    current_user: dict = Depends(require_auth),
+) -> OverviewResponse:
+    """返回当前用户今日总费用（USD）和请求数。"""
+    today = _today_prefix()
+    stmt = select(
+        func.coalesce(func.sum(UsageLog.cost_usd), 0).label("total_cost_usd"),
+        func.count(UsageLog.id).label("request_count"),
+    ).where(
+        UsageLog.created_at.like(f"{today}%"),
+        UsageLog.username == current_user["username"],
+    )
+    result = await session.execute(stmt)
+    row = result.one()
+    return OverviewResponse(
+        total_cost_usd=float(row.total_cost_usd),
+        request_count=int(row.request_count),
+        date=today,
+    )
+
+
+@user_router.get("/stats/tokens", summary="Top 10 Token 用量（当前用户）")
+async def user_stats_tokens(
+    session: AsyncSession = Depends(async_session_generator),
+    current_user: dict = Depends(require_auth),
+) -> list[TokenStatsItem]:
+    """返回当前用户今日费用 Top 10 的 Token（按 cost_usd 降序），含 Token 名称。"""
+    today = _today_prefix()
+    stmt = (
+        select(
+            UsageLog.token_id,
+            UsageLog.username,
+            Token.name.label("token_name"),
+            func.coalesce(func.sum(UsageLog.cost_usd), 0).label("total_cost_usd"),
+            func.count(UsageLog.id).label("request_count"),
+        )
+        .outerjoin(Token, UsageLog.token_id == Token.id)
+        .where(
+            UsageLog.created_at.like(f"{today}%"),
+            UsageLog.username == current_user["username"],
+        )
+        .group_by(UsageLog.token_id, UsageLog.username, Token.name)
+        .order_by(func.sum(UsageLog.cost_usd).desc())
+        .limit(10)
+    )
+    result = await session.execute(stmt)
+    rows = result.all()
+    return [
+        TokenStatsItem(
+            token_id=row.token_id,
+            username=row.username,
+            token_name=row.token_name,
+            total_cost_usd=float(row.total_cost_usd),
+            request_count=int(row.request_count),
+        )
+        for row in rows
+    ]
+
+
+@user_router.get("/stats/models", summary="Top 10 模型请求量（当前用户）")
+async def user_stats_models(
+    session: AsyncSession = Depends(async_session_generator),
+    current_user: dict = Depends(require_auth),
+) -> list[ModelStatsItem]:
+    """返回当前用户今日请求数 Top 10 的模型（按 request_count 降序）。"""
+    today = _today_prefix()
+    stmt = (
+        select(
+            UsageLog.model,
+            func.count(UsageLog.id).label("request_count"),
+        )
+        .where(
+            UsageLog.created_at.like(f"{today}%"),
+            UsageLog.username == current_user["username"],
+        )
+        .group_by(UsageLog.model)
+        .order_by(func.count(UsageLog.id).desc())
+        .limit(10)
+    )
+    result = await session.execute(stmt)
+    rows = result.all()
+    return [
+        ModelStatsItem(
+            model=row.model,
+            request_count=int(row.request_count),
+        )
+        for row in rows
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -583,24 +700,6 @@ async def list_logs(
 # ------ 统计接口 ------------------------------------------------------------
 
 
-class OverviewResponse(BaseModel):
-    total_cost_usd: float
-    request_count: int
-    date: str
-
-
-class TokenStatsItem(BaseModel):
-    token_id: str | None
-    username: str | None
-    total_cost_usd: float
-    request_count: int
-
-
-class ModelStatsItem(BaseModel):
-    model: str | None
-    request_count: int
-
-
 def _today_prefix() -> str:
     """返回今日日期前缀（ISO 8601，UTC，用于 LIKE 查询）。"""
     return datetime.now(timezone.utc).date().isoformat()  # e.g. "2026-03-04"
@@ -630,17 +729,19 @@ async def stats_overview(
 async def stats_tokens(
     session: AsyncSession = Depends(async_session_generator),
 ) -> list[TokenStatsItem]:
-    """返回今日费用 Top 10 的 Token（按 cost_usd 降序）。"""
+    """返回今日费用 Top 10 的 Token（按 cost_usd 降序），含 Token 名称。"""
     today = _today_prefix()
     stmt = (
         select(
             UsageLog.token_id,
             UsageLog.username,
+            Token.name.label("token_name"),
             func.coalesce(func.sum(UsageLog.cost_usd), 0).label("total_cost_usd"),
             func.count(UsageLog.id).label("request_count"),
         )
+        .outerjoin(Token, UsageLog.token_id == Token.id)
         .where(UsageLog.created_at.like(f"{today}%"))
-        .group_by(UsageLog.token_id, UsageLog.username)
+        .group_by(UsageLog.token_id, UsageLog.username, Token.name)
         .order_by(func.sum(UsageLog.cost_usd).desc())
         .limit(10)
     )
@@ -650,6 +751,7 @@ async def stats_tokens(
         TokenStatsItem(
             token_id=row.token_id,
             username=row.username,
+            token_name=row.token_name,
             total_cost_usd=float(row.total_cost_usd),
             request_count=int(row.request_count),
         )

@@ -43,14 +43,7 @@ const router = createBrowserRouter([
           </AuthGuard>
         ),
       },
-      {
-        path: 'dashboard',
-        element: (
-          <AuthGuard roles={['admin', 'superadmin']}>
-            <Dashboard />
-          </AuthGuard>
-        ),
-      },
+      { path: 'dashboard', element: <Dashboard /> },
       {
         path: 'users',
         element: (

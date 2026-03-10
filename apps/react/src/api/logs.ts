@@ -32,3 +32,12 @@ export const getStatsTokens = () =>
 
 export const getStatsModels = () =>
   client.get('/admin/stats/models')
+
+export const getMyStatsOverview = () =>
+  client.get('/user/stats/overview')
+
+export const getMyStatsTokens = () =>
+  client.get('/user/stats/tokens')
+
+export const getMyStatsModels = () =>
+  client.get('/user/stats/models')

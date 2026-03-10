@@ -54,11 +54,9 @@ const Layout: React.FC = () => {
           onClickMenuItem={(key) => navigate(`/${key}`)}
           style={{ border: 'none' }}
         >
-          {isAdmin && (
-            <MenuItem key="dashboard">
-              <IconDashboard /> 仪表板
-            </MenuItem>
-          )}
+          <MenuItem key="dashboard">
+            <IconDashboard /> 仪表板
+          </MenuItem>
           <MenuItem key="apikeys">
             <IconLock /> API 密钥
           </MenuItem>

@@ -5,7 +5,11 @@ import {
 } from '@arco-design/web-react'
 import { IconRefresh } from '@arco-design/web-react/icon'
 import { Button } from '@arco-design/web-react'
-import { getStatsOverview, getStatsTokens, getStatsModels } from '../../api/logs'
+import {
+  getStatsOverview, getStatsTokens, getStatsModels,
+  getMyStatsOverview, getMyStatsTokens, getMyStatsModels,
+} from '../../api/logs'
+import { useAuthStore } from '../../store/auth'
 
 const { Row, Col } = Grid
 
@@ -18,6 +22,7 @@ interface Overview {
 interface TokenStat {
   token_id: string
   username: string | null
+  token_name: string | null
   total_cost_usd: number
   request_count: number
 }
@@ -28,6 +33,9 @@ interface ModelStat {
 }
 
 const Dashboard: React.FC = () => {
+  const { role } = useAuthStore()
+  const isAdmin = role === 'admin' || role === 'superadmin'
+
   const [overview, setOverview] = useState<Overview | null>(null)
   const [tokens, setTokens] = useState<TokenStat[]>([])
   const [models, setModels] = useState<ModelStat[]>([])
@@ -36,11 +44,11 @@ const Dashboard: React.FC = () => {
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [ov, tk, md] = await Promise.all([
-        getStatsOverview(),
-        getStatsTokens(),
-        getStatsModels(),
-      ])
+      const [ov, tk, md] = await Promise.all(
+        isAdmin
+          ? [getStatsOverview(), getStatsTokens(), getStatsModels()]
+          : [getMyStatsOverview(), getMyStatsTokens(), getMyStatsModels()],
+      )
       setOverview(ov.data)
       setTokens(tk.data ?? [])
       setModels(md.data ?? [])
@@ -49,19 +57,31 @@ const Dashboard: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [isAdmin])
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
   const maxModelCount = models[0]?.request_count ?? 1
 
-  const tokenColumns = [
+  const adminTokenColumns = [
     { title: '用户名', dataIndex: 'username', render: (v: string) => v ?? '—' },
-    { title: '请求数', dataIndex: 'request_count', width: 100 },
+    { title: 'Key 名称', dataIndex: 'token_name', render: (v: string) => v ?? '—' },
+    { title: '请求数', dataIndex: 'request_count', width: 90 },
     {
       title: '费用 (USD)',
       dataIndex: 'total_cost_usd',
-      width: 120,
+      width: 110,
+      render: (v: number) => v.toFixed(4),
+    },
+  ]
+
+  const userTokenColumns = [
+    { title: 'Key 名称', dataIndex: 'token_name', render: (v: string) => v ?? '—' },
+    { title: '请求数', dataIndex: 'request_count', width: 90 },
+    {
+      title: '费用 (USD)',
+      dataIndex: 'total_cost_usd',
+      width: 110,
       render: (v: number) => v.toFixed(4),
     },
   ]
@@ -88,7 +108,7 @@ const Dashboard: React.FC = () => {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <Typography.Title heading={5} style={{ margin: 0 }}>
-          Dashboard — {overview?.date ?? '—'}
+          Dashboard
         </Typography.Title>
         <Button icon={<IconRefresh />} loading={loading} onClick={fetchAll}>刷新</Button>
       </div>
@@ -123,7 +143,7 @@ const Dashboard: React.FC = () => {
             <Card title="Token 用量 Top 10（今日）">
               <Table
                 rowKey="token_id"
-                columns={tokenColumns}
+                columns={isAdmin ? adminTokenColumns : userTokenColumns}
                 data={tokens}
                 pagination={false}
                 size="small"
