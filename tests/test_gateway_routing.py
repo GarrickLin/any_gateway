@@ -98,11 +98,11 @@ def test_routing_fallback_to_lower_group_when_model_not_in_high():
 
 
 def test_routing_without_username_fallback():
-    """无 username 时使用旧逻辑：从所有 enabled 渠道中查找。"""
+    """无 username 且无 group_id 时应拒绝访问（返回 None）。"""
     from gateway import find_backend_for_model
 
     result = asyncio.run(find_backend_for_model("gpt-4o", username=None))
-    assert result is not None  # 旧逻辑兜底
+    assert result is None  # 匿名 token 不允许访问
 
 
 def test_routing_unknown_model_returns_none():
@@ -111,3 +111,45 @@ def test_routing_unknown_model_returns_none():
 
     result = asyncio.run(find_backend_for_model("nonexistent-model", username="alice"))
     assert result is None
+
+
+def test_routing_by_token_group_id():
+    """token 有 group_id 时，应直接按绑定分组路由，忽略用户组关系。"""
+    from gateway import find_backend_for_model
+    from db.models import UserGroup
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    # 获取 standard 分组的 id
+    async def _get_standard_id():
+        async with AsyncSession(ENGINE, expire_on_commit=False) as s:
+            from sqlmodel import select
+            res = await s.execute(select(UserGroup).where(UserGroup.name == "standard"))
+            grp = res.scalar_one()
+            return grp.id
+
+    std_id = asyncio.run(_get_standard_id())
+
+    # alice 本来应路由到 premium（优先级高），但绑定 standard group 后应路由到 standard
+    result = asyncio.run(find_backend_for_model("gpt-4o", username="alice", group_id=std_id))
+    assert result is not None
+    assert result["base_url"] == "http://standard/v1"
+
+
+def test_routing_anonymous_with_group_id():
+    """无 username 但有 group_id 时，应能路由成功。"""
+    from gateway import find_backend_for_model
+    from db.models import UserGroup
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    async def _get_premium_id():
+        async with AsyncSession(ENGINE, expire_on_commit=False) as s:
+            from sqlmodel import select
+            res = await s.execute(select(UserGroup).where(UserGroup.name == "premium"))
+            grp = res.scalar_one()
+            return grp.id
+
+    prem_id = asyncio.run(_get_premium_id())
+
+    result = asyncio.run(find_backend_for_model("gpt-4o", username=None, group_id=prem_id))
+    assert result is not None
+    assert result["base_url"] == "http://premium/v1"

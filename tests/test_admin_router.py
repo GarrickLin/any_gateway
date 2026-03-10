@@ -22,6 +22,7 @@ if str(_AG_PATH) not in sys.path:
 # 设置测试环境变量（在导入 app 之前）
 os.environ["ADMIN_KEY"] = "test-admin-secret"
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
+os.environ.setdefault("ADMIN_FALLBACK_KEY", "fallback-key")
 
 # 使用内存数据库引擎覆盖
 TEST_ENGINE = create_async_engine(
@@ -57,12 +58,32 @@ def setup_db():
 
 @pytest.fixture
 def client():
-    """提供测试客户端，覆盖 DB 依赖"""
+    """提供测试客户端，覆盖 DB 依赖（包括 middleware 使用的 engine）"""
+    import db.database as _db
+    import gateway as _gw
+    import middleware.auth as _auth_mw
+
     from db.database import async_session_generator
+
+    # 覆盖所有模块持有的 engine 引用，确保 middleware 也使用 TEST_ENGINE
+    original_db_engine = _db.engine
+    original_gw_engine = _gw.engine
+    _db.engine = TEST_ENGINE
+    _gw.engine = TEST_ENGINE
+    # middleware.auth 通过 `from db.database import engine` 持有本地绑定，需单独覆盖
+    original_mw_engine = getattr(_auth_mw, "engine", None)
+    _auth_mw.engine = TEST_ENGINE
+
     app.dependency_overrides[async_session_generator] = override_session
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c
     app.dependency_overrides.clear()
+
+    # 还原 engine
+    _db.engine = original_db_engine
+    _gw.engine = original_gw_engine
+    if original_mw_engine is not None:
+        _auth_mw.engine = original_mw_engine
 
 
 @pytest.fixture
@@ -251,3 +272,144 @@ def test_get_log_messages_admin_not_found(client):
 
     resp = client.get("/admin/logs/nonexistent_id_12345/messages", headers=auth_header)
     assert resp.status_code == 404
+
+
+def test_update_token_group_id(client, user_jwt_headers):
+    """PATCH /user/tokens/:id 应能修改 group_id。"""
+    admin_headers = {"x-admin-key": "test-admin-secret"}
+
+    # 先创建分组，再通过 GET 获取 id（fastcrud create 返回 null）
+    client.post("/admin/groups", json={"name": "g-patch-test"}, headers=admin_headers)
+    groups = client.get("/admin/groups", headers=admin_headers).json()
+    grp_id = next(g["id"] for g in groups["data"] if g["name"] == "g-patch-test")
+
+    # 创建 token
+    tok = client.post("/user/tokens", json={"name": "tok-patch"}, headers=user_jwt_headers).json()
+    tok_id = tok["id"]
+
+    # 更新 group_id，再 GET 验证
+    res = client.patch(f"/user/tokens/{tok_id}", json={"group_id": grp_id}, headers=user_jwt_headers)
+    assert res.status_code == 200
+    get1 = client.get(f"/user/tokens/{tok_id}", headers=user_jwt_headers)
+    assert get1.status_code == 200
+    assert get1.json()["group_id"] == grp_id
+
+    # 清空 group_id，再 GET 验证
+    res2 = client.patch(f"/user/tokens/{tok_id}", json={"group_id": None}, headers=user_jwt_headers)
+    assert res2.status_code == 200
+    get2 = client.get(f"/user/tokens/{tok_id}", headers=user_jwt_headers)
+    assert get2.status_code == 200
+    assert get2.json()["group_id"] is None
+
+
+def test_user_can_list_groups(client):
+    """普通用户（JWT）应能访问 /user/groups 列出所有分组。"""
+    admin_headers = {"x-admin-key": "test-admin-secret"}
+
+    # 先创建一个分组
+    client.post("/admin/groups", json={"name": "test-visible-group"}, headers=admin_headers)
+
+    # 使用 JWT（通过 create_access_token 直接生成 user 角色 JWT）
+    from services.auth_service import create_access_token
+    jwt = create_access_token("test-user", "user")
+
+    res = client.get("/user/groups", headers={"Authorization": f"Bearer {jwt}"})
+    assert res.status_code == 200
+    data = res.json()
+    assert isinstance(data, list)
+    assert any(g["name"] == "test-visible-group" for g in data)
+    # 严格验证字段隔离：仅返回 id 和 name，不暴露 rpm_limit 等其他字段
+    assert set(data[0].keys()) == {"id", "name"}
+
+
+# ---------------------------------------------------------------------------
+# 9. /v1/models 可选 API Key 认证测试
+# ---------------------------------------------------------------------------
+
+@pytest.mark.xfail(reason="requires Task 2: /v1/models endpoint to support optional auth from request.state")
+def test_models_with_valid_api_key_returns_200(client):
+    """GET /v1/models 携带有效 API Key（x-api-key header）时，middleware 应注入 token 信息，endpoint 返回 200。"""
+    login = client.post("/admin/auth/login", json={"username": "_admin_fallback", "password": os.environ["ADMIN_FALLBACK_KEY"]})
+    jwt = login.json()["access_token"]
+    user_headers = {"Authorization": f"Bearer {jwt}"}
+    tok = client.post("/user/tokens", json={"name": "models-test-key"}, headers=user_headers).json()
+    key = tok["key"]
+
+    res = client.get("/v1/models", headers={"x-api-key": key})
+    assert res.status_code == 200
+    assert "data" in res.json()
+
+
+@pytest.mark.xfail(reason="requires Task 2: /v1/models endpoint to support optional auth from request.state")
+def test_models_with_x_goog_api_key_header(client):
+    """GET /v1/models 携带有效 key 通过 x-goog-api-key header 时，应返回 200。"""
+    login = client.post("/admin/auth/login", json={"username": "_admin_fallback", "password": os.environ["ADMIN_FALLBACK_KEY"]})
+    jwt = login.json()["access_token"]
+    user_headers = {"Authorization": f"Bearer {jwt}"}
+    tok = client.post("/user/tokens", json={"name": "models-goog-key"}, headers=user_headers).json()
+    key = tok["key"]
+
+    res = client.get("/v1/models", headers={"x-goog-api-key": key})
+    assert res.status_code == 200
+    assert "data" in res.json()
+
+
+def test_models_with_invalid_api_key_returns_specific_error(client):
+    """GET /v1/models 携带无效 API Key 时，应返回 401 且错误信息明确（非 Authentication required）。"""
+    res = client.get("/v1/models", headers={"x-api-key": "sk-invalid-key-xyz"})
+    assert res.status_code == 401
+    body = res.json()
+    assert body.get("error") == "invalid api key"
+
+
+def test_models_without_auth_returns_401(client):
+    """GET /v1/models 不带任何认证时应返回 401。"""
+    res = client.get("/v1/models")
+    assert res.status_code == 401
+
+
+def test_models_filtered_by_token_group(client):
+    """API Key 绑定了特定 group 时，/v1/models 只返回该 group 渠道的模型。"""
+    import json as _json
+
+    ADMIN_HEADERS = {"x-admin-key": "test-admin-secret"}
+
+    # 1. 创建两个分组（fastcrud create 返回 null，需 GET 获取 id）
+    client.post("/admin/groups", json={"name": "models-group-a"}, headers=ADMIN_HEADERS)
+    client.post("/admin/groups", json={"name": "models-group-b"}, headers=ADMIN_HEADERS)
+    groups_resp = client.get("/admin/groups", headers=ADMIN_HEADERS).json()
+    grp_a = next(g for g in groups_resp["data"] if g["name"] == "models-group-a")
+    grp_b = next(g for g in groups_resp["data"] if g["name"] == "models-group-b")
+
+    # 2. 创建两个渠道，各有不同模型（fastcrud create 返回 null，需 GET 获取 id）
+    client.post("/admin/channels", json={
+        "name": "ch-model-a", "provider": "openai",
+        "base_url": "http://fake-a/v1", "api_key": "fake-a",
+        "models": _json.dumps(["model-only-in-a"]), "enabled": True, "weight": 1
+    }, headers=ADMIN_HEADERS)
+    client.post("/admin/channels", json={
+        "name": "ch-model-b", "provider": "openai",
+        "base_url": "http://fake-b/v1", "api_key": "fake-b",
+        "models": _json.dumps(["model-only-in-b"]), "enabled": True, "weight": 1
+    }, headers=ADMIN_HEADERS)
+    channels_resp = client.get("/admin/channels", headers=ADMIN_HEADERS).json()
+    ch_a = next(c for c in channels_resp["data"] if c["name"] == "ch-model-a")
+    ch_b = next(c for c in channels_resp["data"] if c["name"] == "ch-model-b")
+
+    # 3. 分组-渠道关联
+    client.post(f"/admin/groups/{grp_a['id']}/channels/{ch_a['id']}", headers=ADMIN_HEADERS)
+    client.post(f"/admin/groups/{grp_b['id']}/channels/{ch_b['id']}", headers=ADMIN_HEADERS)
+
+    # 4. 创建 token 并绑定 grp_a
+    login = client.post("/admin/auth/login", json={"username": "_admin_fallback", "password": os.environ["ADMIN_FALLBACK_KEY"]})
+    jwt_token = login.json()["access_token"]
+    user_headers = {"Authorization": f"Bearer {jwt_token}"}
+    tok = client.post("/user/tokens", json={"name": "group-a-token", "group_id": grp_a["id"]}, headers=user_headers).json()
+    api_key = tok["key"]
+
+    # 5. 用绑定了 grp_a 的 API Key 查模型，应只看到 model-only-in-a
+    res = client.get("/v1/models", headers={"x-api-key": api_key})
+    assert res.status_code == 200
+    model_ids = [m["id"] for m in res.json()["data"]]
+    assert "model-only-in-a" in model_ids
+    assert "model-only-in-b" not in model_ids
