@@ -90,7 +90,10 @@ const parseResponseContent = (bodyStr?: string): string => {
 
   // SSE 格式检测：包含 "data:" 前缀的行
   if (trimmed.startsWith('data:') || trimmed.includes('\ndata:')) {
-    const parts: string[] = []
+    const textParts: string[] = []
+    // 追踪 tool_use 块：index -> { name, partialJson }
+    const toolBlocks = new Map<number, { name: string; partialJson: string }>()
+
     for (const line of bodyStr.split('\n')) {
       const s = line.trim()
       if (!s.startsWith('data:')) continue
@@ -98,11 +101,43 @@ const parseResponseContent = (bodyStr?: string): string => {
       if (payload === '[DONE]') continue
       try {
         const obj = JSON.parse(payload) as Record<string, unknown>
+
+        // 记录 tool_use 块的名称
+        if (obj.type === 'content_block_start') {
+          const block = obj.content_block as Record<string, unknown> | undefined
+          const idx = obj.index as number | undefined
+          if (block?.type === 'tool_use' && idx !== undefined) {
+            toolBlocks.set(idx, { name: (block.name as string) ?? 'unknown', partialJson: '' })
+          }
+        }
+
         const text = extractDeltaText(obj)
-        if (text) parts.push(text)
+        if (text) {
+          textParts.push(text)
+        } else if (obj.type === 'content_block_delta') {
+          // 拼装 input_json_delta（tool_use 输入）
+          const d = obj.delta as Record<string, unknown> | undefined
+          const idx = obj.index as number | undefined
+          if (d?.type === 'input_json_delta' && typeof d.partial_json === 'string' && idx !== undefined) {
+            const block = toolBlocks.get(idx)
+            if (block) block.partialJson += d.partial_json
+          }
+        }
       } catch { /* 忽略无效行 */ }
     }
-    return parts.join('')
+
+    if (textParts.length > 0) return textParts.join('')
+
+    // 纯 tool-use 响应：格式化工具调用内容
+    if (toolBlocks.size > 0) {
+      return Array.from(toolBlocks.values()).map(({ name, partialJson }) => {
+        let input = partialJson
+        try { input = JSON.stringify(JSON.parse(partialJson), null, 2) } catch { /* keep raw */ }
+        return `**${name}**\n\`\`\`json\n${input}\n\`\`\``
+      }).join('\n\n')
+    }
+
+    return ''
   }
 
   // 非流式：直接解析 JSON
