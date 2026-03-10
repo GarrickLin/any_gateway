@@ -16,6 +16,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
     AUTH_OPTIONAL_KEY_PATHS = {"/v1/models"}
 
     @staticmethod
+    def _extract_dedicated_key(headers) -> str | None:
+        """提取专用 API Key header（不含 Authorization Bearer）。"""
+        return headers.get("x-api-key") or headers.get("x-goog-api-key") or None
+
+    @staticmethod
     def _extract_key(headers) -> str | None:
         """
         从请求头提取 API Key，优先级：
@@ -23,9 +28,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         2. x-goog-api-key（Gemini 风格）
         3. Authorization: Bearer <key>
         """
-        if key := headers.get("x-api-key"):
-            return key
-        if key := headers.get("x-goog-api-key"):
+        if key := AuthMiddleware._extract_dedicated_key(headers):
             return key
         auth = headers.get("authorization", "")
         bearer = auth.removeprefix("Bearer ").strip()
@@ -34,7 +37,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
     @staticmethod
     def _inject_token_state(request: Request, token: dict) -> None:
         """将已验证的 token 信息注入 request.state。"""
-        request.state.api_key_authed = True  # sentinel for downstream handlers
         request.state.token_id = token["id"]
         request.state.token_name = token["name"]
         request.state.token_group_id = token.get("group_id")
@@ -84,23 +86,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # 可选 API Key 路径（如 /v1/models）
         if path in self.AUTH_OPTIONAL_KEY_PATHS:
             # 只检查专用 API Key headers，Authorization Bearer 保留给 endpoint 的 JWT 认证
-            api_key = (
-                request.headers.get("x-api-key")
-                or request.headers.get("x-goog-api-key")
-            )
+            api_key = self._extract_dedicated_key(request.headers)
             if api_key:
                 token, error_msg, status_code = await self._validate_key(api_key)
                 if token is None:
                     return JSONResponse({"error": error_msg}, status_code=status_code)
                 self._inject_token_state(request, token)
             # 无专用 key → 放行，由 endpoint 处理 JWT 认证
-            # 注意：当前 endpoint 使用 Header(...) 强制依赖，缺失时 FastAPI 返回 422；
-            # 统一转换为 401，避免调用方收到不明确的 422。
-            # Task 2 修改 endpoint 为可选认证后，此转换可移除。
-            response = await call_next(request)
-            if response.status_code == 422:
-                return JSONResponse({"error": "authentication required"}, status_code=401)
-            return response
+            return await call_next(request)
 
         # 必须有 API Key 的路径（/v1/* 其余路径）
         key = self._extract_key(request.headers)

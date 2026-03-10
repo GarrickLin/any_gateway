@@ -255,6 +255,13 @@ async def find_backend_for_model(
                 return c
         return channels[-1]
 
+    def _pick(supported: list) -> Optional[Dict[str, str]]:
+        """从候选渠道列表中加权随机选取，返回路由信息。"""
+        chosen = _weighted_choice(supported)
+        info = _extract_model_info(chosen, model_name)
+        info["has_conflict"] = len(supported) > 1
+        return info
+
     async with AsyncSession(engine, expire_on_commit=False) as session:
         # 策略 1：token 绑定了特定分组，直接路由
         if group_id:
@@ -269,12 +276,7 @@ async def find_backend_for_model(
             result = await session.execute(stmt)
             candidates = result.scalars().all()
             supported = [c for c in candidates if _extract_model_info(c, model_name)]
-            if not supported:
-                return None
-            chosen = _weighted_choice(supported)
-            info = _extract_model_info(chosen, model_name)
-            info["has_conflict"] = len(supported) > 1
-            return info
+            return _pick(supported) if supported else None
 
         if not username:
             return None  # 匿名 token 不允许访问
@@ -302,16 +304,10 @@ async def find_backend_for_model(
             result = await session.execute(stmt)
             candidates = result.scalars().all()
 
-            # 3. 过滤支持该模型的渠道
+            # 3. 过滤支持该模型的渠道，加权随机选取
             supported = [c for c in candidates if _extract_model_info(c, model_name)]
-            if not supported:
-                continue
-
-            # 4. 加权随机选一个渠道
-            chosen = _weighted_choice(supported)
-            info = _extract_model_info(chosen, model_name)
-            info["has_conflict"] = len(supported) > 1
-            return info
+            if supported:
+                return _pick(supported)
 
         # 分组内未找到，仅 _admin_fallback 或 superadmin 允许回退到全局渠道
         if username != "_admin_fallback":
@@ -748,9 +744,8 @@ async def list_models(
     # 从 middleware 注入的 API Key token 信息
     token_group_id: str | None = getattr(request.state, "token_group_id", None)
     token_username: str | None = getattr(request.state, "token_username", None)
-    api_key_authed = getattr(request.state, "api_key_authed", False)
 
-    if not api_key_authed and not current_user:
+    if token_group_id is None and token_username is None and not current_user:
         raise HTTPException(status_code=401, detail="Authentication required")
 
     def _extract_models(ch: Channel) -> list[dict]:
@@ -789,7 +784,7 @@ async def list_models(
         return result.scalars().all()
 
     async with AsyncSession(engine, expire_on_commit=False) as session:
-        if api_key_authed and token_group_id:
+        if token_group_id:
             # 策略 1：token 绑定了特定分组，只返回该组模型
             stmt = (
                 select(Channel)
@@ -803,7 +798,7 @@ async def list_models(
             result = await session.execute(stmt)
             channels = result.scalars().all()
 
-        elif api_key_authed and token_username:
+        elif token_username:
             # 策略 2：token 有 username，按用户所在分组
             channels = await _channels_by_username(session, token_username)
 
