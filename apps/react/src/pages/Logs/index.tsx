@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import {
   Table, Button, Input, Select, DatePicker,
-  Typography, Tag, Grid, Spin, Collapse
+  Typography, Tag, Grid, Spin, Collapse, Message
 } from '@arco-design/web-react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import dayjs from 'dayjs'
 import { getLogs, getMyLogs, getLogMessages, getMyLogMessages } from '../../api/logs'
 import { useAuthStore } from '../../store/auth'
@@ -13,9 +14,20 @@ const { RangePicker } = DatePicker
 
 const today = dayjs().format('YYYY-MM-DD')
 
+interface ContentBlock {
+  type: string
+  text?: string          // text block
+  thinking?: string      // thinking block
+  name?: string          // tool_use
+  input?: unknown        // tool_use
+  id?: string            // tool_use id
+  tool_use_id?: string   // tool_result
+  content?: string | ContentBlock[]  // tool_result
+}
+
 interface MessageEntry {
   role: string
-  content: string | { type: string; text?: string }[]
+  content: string | ContentBlock[]
 }
 
 interface MessagesCache {
@@ -102,12 +114,66 @@ const parseResponseContent = (bodyStr?: string): string => {
   }
 }
 
-const getMessageText = (content: MessageEntry['content']): string => {
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    return content.map(b => (typeof b === 'string' ? b : b.text ?? '')).join('')
+const preStyle: React.CSSProperties = {
+  margin: 0, padding: '6px 10px',
+  background: '#f0f0f0', borderRadius: 4,
+  fontSize: 12, lineHeight: 1.6,
+  whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+  overflowX: 'auto',
+}
+
+const RenderBlock: React.FC<{ block: ContentBlock }> = ({ block }) => {
+  switch (block.type) {
+    case 'text':
+      return <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{block.text ?? ''}</ReactMarkdown>
+
+    case 'thinking':
+      return (
+        <details style={{ margin: '4px 0' }}>
+          <summary style={{ cursor: 'pointer', color: '#8c8c8c', fontSize: 12 }}>thinking</summary>
+          <pre style={{ ...preStyle, background: '#fafafa', color: '#595959', marginTop: 4 }}>{block.thinking}</pre>
+        </details>
+      )
+
+    case 'tool_use':
+      return (
+        <div style={{ margin: '4px 0', border: '1px solid #d9d9d9', borderRadius: 4, overflow: 'hidden' }}>
+          <div style={{ padding: '3px 10px', background: '#e6f4ff', fontSize: 12, fontWeight: 600, color: '#1677ff', display: 'flex', gap: 6 }}>
+            <span>tool_use</span>
+            <span style={{ color: '#262626' }}>{block.name}</span>
+          </div>
+          <pre style={preStyle}>{JSON.stringify(block.input, null, 2)}</pre>
+        </div>
+      )
+
+    case 'tool_result': {
+      const c = block.content
+      const text = typeof c === 'string' ? c
+        : Array.isArray(c) ? c.map(b => b.text ?? '').join('\n')
+        : ''
+      return (
+        <div style={{ margin: '4px 0', border: '1px solid #d9d9d9', borderRadius: 4, overflow: 'hidden' }}>
+          <div style={{ padding: '3px 10px', background: '#f6ffed', fontSize: 12, fontWeight: 600, color: '#389e0d' }}>
+            tool_result
+          </div>
+          <pre style={preStyle}>{text || '（空）'}</pre>
+        </div>
+      )
+    }
+
+    default:
+      return <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{block.text ?? ''}</ReactMarkdown>
   }
-  return ''
+}
+
+const RenderContent: React.FC<{ content: MessageEntry['content'] }> = ({ content }) => {
+  if (typeof content === 'string') {
+    return <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{content || '（无内容）'}</ReactMarkdown>
+  }
+  if (Array.isArray(content) && content.length > 0) {
+    return <>{content.map((b, i) => <RenderBlock key={i} block={b} />)}</>
+  }
+  return <span style={{ color: '#8c8c8c' }}>（无内容）</span>
 }
 
 const roleColor: Record<string, string> = {
@@ -122,6 +188,25 @@ const roleBgColor: Record<string, string> = {
   assistant: '#f0f9eb',
 }
 
+const mdPlugins = [remarkGfm]
+
+const mdComponents = {
+  h1: ({ children }: React.HTMLAttributes<HTMLHeadingElement>) => <h3 style={{ fontSize: '1.1em', fontWeight: 600, margin: '8px 0 4px' }}>{children}</h3>,
+  h2: ({ children }: React.HTMLAttributes<HTMLHeadingElement>) => <h4 style={{ fontSize: '1em', fontWeight: 600, margin: '6px 0 4px' }}>{children}</h4>,
+  h3: ({ children }: React.HTMLAttributes<HTMLHeadingElement>) => <strong style={{ display: 'block', margin: '4px 0' }}>{children}</strong>,
+  table: ({ children }: React.HTMLAttributes<HTMLTableElement>) => (
+    <div style={{ overflowX: 'auto', margin: '8px 0' }}>
+      <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12 }}>{children}</table>
+    </div>
+  ),
+  th: ({ children }: React.HTMLAttributes<HTMLTableCellElement>) => (
+    <th style={{ border: '1px solid #d9d9d9', padding: '4px 8px', background: '#f0f0f0', textAlign: 'left' }}>{children}</th>
+  ),
+  td: ({ children }: React.HTMLAttributes<HTMLTableCellElement>) => (
+    <td style={{ border: '1px solid #d9d9d9', padding: '4px 8px' }}>{children}</td>
+  ),
+}
+
 const Logs: React.FC = () => {
   const { role } = useAuthStore()
   const isAdmin = role === 'admin' || role === 'superadmin'
@@ -129,24 +214,33 @@ const Logs: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [filters, setFilters] = useState<any>({ start_date: today, end_date: today })
   const [messagesCache, setMessagesCache] = useState<Record<string, MessagesCache>>({})
+  const [pagination, setPagination] = useState({ current: 1, pageSize: 20, total: 0 })
 
   const fetchLogs = async (params: any = {}) => {
     setLoading(true)
     try {
       const res = isAdmin ? await getLogs(params) : await getMyLogs(params)
       const raw = res.data?.data ?? res.data
+      const total = res.data?.total ?? 0
       setData(Array.isArray(raw) ? raw : [])
+      setPagination(prev => ({ ...prev, total, current: params.page ?? 1 }))
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    fetchLogs({ start_date: today, end_date: today })
+    fetchLogs({ start_date: today, end_date: today, page: 1, page_size: pagination.pageSize })
   }, [])
 
   const handleSearch = () => {
-    fetchLogs(filters)
+    const params = { ...filters, page: 1, page_size: pagination.pageSize }
+    setPagination(prev => ({ ...prev, current: 1 }))
+    fetchLogs(params)
+  }
+
+  const handlePageChange = (page: number, pageSize: number) => {
+    fetchLogs({ ...filters, page, page_size: pageSize })
   }
 
   const handleExpand = useCallback(async (record: { id: string }, expanded: boolean) => {
@@ -242,6 +336,13 @@ const Logs: React.FC = () => {
         loading={loading}
         rowKey="id"
         onExpand={handleExpand}
+        pagination={{
+          current: pagination.current,
+          pageSize: pagination.pageSize,
+          total: pagination.total,
+          showTotal: true,
+          onChange: handlePageChange,
+        }}
         expandedRowRender={(record) => {
           const cache = messagesCache[record.id]
           if (!cache || cache.loading) {
@@ -284,12 +385,12 @@ const Logs: React.FC = () => {
                         {msg.role}
                       </Tag>
                       <div style={{
-                        flex: 1, maxHeight: 160, overflow: 'auto',
+                        flex: 1, maxHeight: 400, overflow: 'auto',
                         background: roleBgColor[msg.role] ?? '#f7f8fa',
                         padding: '4px 10px', borderRadius: 4,
                         fontSize: 13, lineHeight: 1.6,
                       }}>
-                        <ReactMarkdown>{getMessageText(msg.content) || '（无内容）'}</ReactMarkdown>
+                        <RenderContent content={msg.content} />
                       </div>
                     </div>
                   ))}
@@ -300,7 +401,23 @@ const Logs: React.FC = () => {
               {rawRequestJson && (
                 <Collapse style={{ marginTop: 12 }} bordered={false}>
                   <Collapse.Item
-                    header="Raw Request JSON"
+                    header={
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span>Raw Request JSON</span>
+                        <Button
+                          size="mini"
+                          style={{ marginLeft: 8 }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            navigator.clipboard.writeText(rawRequestJson)
+                              .then(() => Message.success('已复制'))
+                              .catch(() => Message.error('复制失败'))
+                          }}
+                        >
+                          复制
+                        </Button>
+                      </div>
+                    }
                     name="raw"
                     style={{ background: '#fafafa', borderRadius: 4, fontSize: 13 }}
                   >
@@ -322,7 +439,7 @@ const Logs: React.FC = () => {
                     background: '#f0f9eb', padding: '6px 16px', borderRadius: 4,
                     fontSize: 13, lineHeight: 1.6,
                   }}>
-                    <ReactMarkdown>{responseText}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{responseText}</ReactMarkdown>
                   </div>
                 </>
               )}
