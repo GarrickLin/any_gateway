@@ -32,7 +32,19 @@ const Chat: React.FC = () => {
   useEffect(() => {
     loadKeys()
     loadModels()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jwtToken])
+
+  useEffect(() => {
+    if (selectedKey) {
+      setSelectedProvider(undefined)
+      setSelectedModel('')
+      loadModels(selectedKey)
+    } else {
+      loadModels()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedKey])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -48,11 +60,21 @@ const Chat: React.FC = () => {
     }
   }
 
-  const loadModels = async () => {
+  const loadModels = async (apiKey?: string) => {
     try {
-      const res = await fetch('/v1/models', {
-        headers: jwtToken ? { Authorization: `Bearer ${jwtToken}` } : {},
-      })
+      const headers: Record<string, string> = {}
+      if (apiKey) {
+        headers['x-api-key'] = apiKey
+      } else if (jwtToken) {
+        headers['Authorization'] = `Bearer ${jwtToken}`
+      }
+      const res = await fetch('/v1/models', { headers })
+      if (!res.ok) {
+        setAllModels([])
+        setProviderModelMap({})
+        setProviders([])
+        return
+      }
       const json = await res.json()
       const data: { id?: string; owned_by?: string }[] = json.data ?? []
       const models = data.map(m => m.id).filter(Boolean) as string[]
@@ -152,9 +174,21 @@ const Chat: React.FC = () => {
       try {
         const json = JSON.parse(data)
         if (json.error) {
-          const code = json.error.code != null ? `[${json.error.code}] ` : ''
-          assistantContent = `${code}${json.error.message ?? JSON.stringify(json.error)}`
-          updateLastAssistant(assistantContent)
+          const err = json.error
+          const rawMsg = typeof err === 'string' ? err : (err.message ?? JSON.stringify(err))
+          const code = typeof err === 'object' && err.code != null ? err.code : ''
+          const label = code ? `[${code}] ` : ''
+          // toast 截断到 120 字符避免 Arco Message 渲染失败
+          const toastMsg = rawMsg.length > 120 ? rawMsg.slice(0, 120) + '…' : rawMsg
+          Message.error(`请求失败：${label}${toastMsg}`)
+          // 将错误写入 assistant 气泡，方便用户看到完整信息
+          setHistory(prev => {
+            const last = prev[prev.length - 1]
+            if (last?.role === 'assistant' && !last.content) {
+              return [...prev.slice(0, -1), { role: 'assistant', content: `❌ 请求失败 ${label}${rawMsg}` }]
+            }
+            return prev
+          })
           return
         }
         assistantContent += json.choices?.[0]?.delta?.content ?? ''
@@ -192,9 +226,19 @@ const Chat: React.FC = () => {
       try {
         const json = JSON.parse(data)
         if (json.error) {
-          const code = json.error.code != null ? `[${json.error.code}] ` : ''
-          assistantContent = `${code}${json.error.message ?? JSON.stringify(json.error)}`
-          updateLastAssistant(assistantContent)
+          const err = json.error
+          const rawMsg = typeof err === 'string' ? err : (err.message ?? JSON.stringify(err))
+          const code = typeof err === 'object' && err.code != null ? err.code : ''
+          const label = code ? `[${code}] ` : ''
+          const toastMsg = rawMsg.length > 120 ? rawMsg.slice(0, 120) + '…' : rawMsg
+          Message.error(`请求失败：${label}${toastMsg}`)
+          setHistory(prev => {
+            const last = prev[prev.length - 1]
+            if (last?.role === 'assistant' && !last.content) {
+              return [...prev.slice(0, -1), { role: 'assistant', content: `❌ 请求失败 ${label}${rawMsg}` }]
+            }
+            return prev
+          })
           return
         }
         if (json.type === 'content_block_delta' && json.delta?.type === 'text_delta') {
@@ -210,11 +254,19 @@ const Chat: React.FC = () => {
   const readSSE = async (response: Response, onLine: (line: string) => void) => {
     const reader = response.body!.getReader()
     const decoder = new TextDecoder()
+    let buffer = ''
     while (true) {
       const { done, value } = await reader.read()
-      if (done) break
-      const chunk = decoder.decode(value)
-      for (const line of chunk.split('\n')) {
+      if (done) {
+        // 处理末尾没有换行的残余内容
+        if (buffer.trim()) onLine(buffer)
+        break
+      }
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      // 最后一段可能不完整，留在 buffer 等待下一个 chunk
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
         if (line.trim()) onLine(line)
       }
     }
