@@ -201,8 +201,18 @@ async def admin_login(
 
 
 @me_router.get("/me", summary="获取当前登录用户信息")
-async def get_me(user: dict = Depends(require_auth)) -> dict[str, str]:
-    return user
+async def get_me(
+    user: dict = Depends(require_auth),
+    session: AsyncSession = Depends(async_session_generator),
+) -> dict:
+    from db.models import User
+    crud = FastCRUD(User)
+    db_user = await crud.get(session, username=user.get("sub"))
+    return {
+        **user,
+        "quota_usd": db_user.get("quota_usd") if db_user else 0,
+        "used_usd": db_user.get("used_usd", 0) if db_user else 0,
+    }
 
 
 # ---------------------------------------------------------------------------

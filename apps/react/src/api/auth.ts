@@ -9,6 +9,8 @@ export interface LoginResponse {
 export interface MeResponse {
   username: string
   role: string
+  quota_usd: number | null
+  used_usd: number
 }
 
 export const login = (username: string, password: string) =>
