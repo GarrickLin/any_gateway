@@ -11,7 +11,13 @@ _AG_PATH = _REPO_ROOT / "any_gateway"
 if str(_AG_PATH) not in sys.path:
     sys.path.insert(0, str(_AG_PATH))
 
-from services.quota import check_quota
+from services.quota import (
+    check_quota,
+    check_request_limit,
+    check_token_limit,
+    check_rolling_cost_limit,
+    check_account_quota,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -58,3 +64,99 @@ def test_update_usage_request_id_none_check():
     request_id = None
     kwargs = {"id": request_id} if request_id is not None else {}
     assert kwargs == {}  # None 才降级为自动 id
+
+
+# ---------------------------------------------------------------------------
+# check_request_limit 测试
+# ---------------------------------------------------------------------------
+
+def test_check_request_limit_disabled_when_zero():
+    """limit=0 表示禁用，应始终返回 True。"""
+    assert check_request_limit(current_count=9999, limit=0) is True
+
+
+def test_check_request_limit_within():
+    """current_count < limit 时，在限制内，返回 True。"""
+    assert check_request_limit(current_count=5, limit=10) is True
+
+
+def test_check_request_limit_at_limit():
+    """current_count == limit 时，已达上限，返回 False。"""
+    assert check_request_limit(current_count=10, limit=10) is False
+
+
+def test_check_request_limit_over():
+    """current_count > limit 时，超出上限，返回 False。"""
+    assert check_request_limit(current_count=15, limit=10) is False
+
+
+# ---------------------------------------------------------------------------
+# check_token_limit 测试
+# ---------------------------------------------------------------------------
+
+def test_check_token_limit_disabled_when_zero():
+    """limit=0 表示禁用，应始终返回 True。"""
+    assert check_token_limit(current_tokens=9999, limit=0) is True
+
+
+def test_check_token_limit_within():
+    """current_tokens < limit 时，在限制内，返回 True。"""
+    assert check_token_limit(current_tokens=500, limit=1000) is True
+
+
+def test_check_token_limit_at_limit():
+    """current_tokens == limit 时，已达上限，返回 False。"""
+    assert check_token_limit(current_tokens=1000, limit=1000) is False
+
+
+def test_check_token_limit_over():
+    """current_tokens > limit 时，超出上限，返回 False。"""
+    assert check_token_limit(current_tokens=1500, limit=1000) is False
+
+
+# ---------------------------------------------------------------------------
+# check_rolling_cost_limit 测试
+# ---------------------------------------------------------------------------
+
+def test_check_rolling_cost_limit_disabled_when_zero():
+    """limit=0 表示禁用，应始终返回 True。"""
+    assert check_rolling_cost_limit(current_cost=999.99, limit=0) is True
+
+
+def test_check_rolling_cost_limit_within():
+    """current_cost < limit 时，在限制内，返回 True。"""
+    assert check_rolling_cost_limit(current_cost=3.5, limit=10.0) is True
+
+
+def test_check_rolling_cost_limit_at_limit():
+    """current_cost == limit 时，已达上限，返回 False。"""
+    assert check_rolling_cost_limit(current_cost=10.0, limit=10.0) is False
+
+
+def test_check_rolling_cost_limit_over():
+    """current_cost > limit 时，超出上限，返回 False。"""
+    assert check_rolling_cost_limit(current_cost=12.5, limit=10.0) is False
+
+
+# ---------------------------------------------------------------------------
+# check_account_quota 测试
+# ---------------------------------------------------------------------------
+
+def test_check_account_quota_none_is_unlimited():
+    """quota_usd=None 表示无限额度，应返回 True。"""
+    assert check_account_quota(quota_usd=None) is True
+
+
+def test_check_account_quota_positive_has_balance():
+    """quota_usd > 0 表示有余额，应返回 True。"""
+    assert check_account_quota(quota_usd=10.0) is True
+
+
+def test_check_account_quota_zero_no_balance():
+    """quota_usd=0 表示无余额，应返回 False。"""
+    assert check_account_quota(quota_usd=0) is False
+
+
+def test_check_account_quota_negative_no_balance():
+    """quota_usd < 0 视为无余额，应返回 False。"""
+    assert check_account_quota(quota_usd=-1.0) is False

@@ -79,3 +79,45 @@ async def update_usage(
     except Exception as exc:  # pylint: disable=broad-except
         # 用量记录失败不应影响请求结果，仅记录错误日志
         logger.exception(f"update_usage 失败 (token_id={token_id})")
+
+
+def check_request_limit(current_count: int, limit: float) -> bool:
+    """
+    检查滚动窗口内请求次数是否在限制内。
+    limit <= 0 表示禁用，始终返回 True。
+    """
+    if limit <= 0:
+        return True
+    return current_count < limit
+
+
+def check_token_limit(current_tokens: int, limit: float) -> bool:
+    """
+    检查滚动窗口内 token 数是否在限制内。
+    limit <= 0 表示禁用，始终返回 True。
+    """
+    if limit <= 0:
+        return True
+    return current_tokens < limit
+
+
+def check_rolling_cost_limit(current_cost: float, limit: float) -> bool:
+    """
+    检查滚动窗口内总金额是否在限制内。
+    limit <= 0 表示禁用，始终返回 True。
+    """
+    if limit <= 0:
+        return True
+    return current_cost < limit
+
+
+def check_account_quota(quota_usd: float | None) -> bool:
+    """
+    检查用户账户是否有余额可用。
+    - None：无限额度，放行
+    - > 0：有余额，放行
+    - <= 0：无余额，拒绝
+    """
+    if quota_usd is None:
+        return True
+    return quota_usd > 0
