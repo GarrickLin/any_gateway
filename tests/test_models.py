@@ -107,17 +107,16 @@ def test_rate_limit_importable():
 
 def test_rate_limit_id_auto_generated():
     """RateLimit 创建时 id 自动生成（非空）。"""
-    from db.models import UserGroup, RateLimit
-    grp = UserGroup(name="rl-test-grp")
+    from db.models import RateLimit
     # id 尚未入库，但 default_factory 应立即生成
-    rl = RateLimit(group_id="dummy-group-id", window_sec=60, type="request_limit", value=100)
+    rl = RateLimit(group_id="dummy-group-id", window_sec=60, limit_type="request_limit", value=100)
     assert rl.id is not None and len(rl.id) > 0
 
 
 def test_rate_limit_value_zero_valid():
     """RateLimit.value=0 合法（表示禁用该限制）。"""
     from db.models import RateLimit
-    rl = RateLimit(group_id="dummy", window_sec=60, type="token_limit", value=0)
+    rl = RateLimit(group_id="dummy", window_sec=60, limit_type="token_limit", value=0)
     assert rl.value == 0
 
 

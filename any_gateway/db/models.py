@@ -218,7 +218,7 @@ class GroupChannel(SQLModel, table=True):
 class RateLimitBase(SQLModel):
     group_id: str = Field(foreign_key="user_groups.id")
     window_sec: int        # 滚动窗口秒数
-    type: str              # "request_limit" | "token_limit" | "quota_limit"
+    limit_type: str        # "request_limit" | "token_limit" | "quota_limit"
     value: float           # 限制值，0 = 禁用
 
 
@@ -233,5 +233,5 @@ class RateLimitCreate(RateLimitBase):
 
 class RateLimitUpdate(SQLModel):
     window_sec: int | None = None
-    type: str | None = None
+    limit_type: str | None = None
     value: float | None = None
