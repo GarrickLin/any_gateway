@@ -1,33 +1,44 @@
-from datetime import datetime, timezone
+from __future__ import annotations
 
+import os
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi.responses import JSONResponse
+from fastcrud import FastCRUD
+from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from fastapi.responses import JSONResponse
-from sqlalchemy.ext.asyncio import AsyncSession
-from fastcrud import FastCRUD
-from db.models import Token
+
 from db.database import engine
-from loguru import logger
+from db.models import Token, User
+
+# 导出供测试 patch
+from services.rate_limit_redis import get_window_count, get_window_sum  # noqa: F401
+
+_redis_client = None
+
+
+async def _get_redis():
+    global _redis_client
+    if _redis_client is None:
+        import redis.asyncio as aioredis
+        url = os.getenv("REDIS_URL", "redis://localhost:6379")
+        _redis_client = aioredis.from_url(url, decode_responses=True)
+    return _redis_client
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
     AUTH_PREFIXES = ("/v1/",)
-    # 可选 API Key 路径：无 key → 放行；有效 key → 注入；无效 key → 401（快速失败）
     AUTH_OPTIONAL_KEY_PATHS = {"/v1/models"}
 
     @staticmethod
     def _extract_dedicated_key(headers) -> str | None:
-        """提取专用 API Key header（不含 Authorization Bearer）。"""
         return headers.get("x-api-key") or headers.get("x-goog-api-key") or None
 
     @staticmethod
     def _extract_key(headers) -> str | None:
-        """
-        从请求头提取 API Key，优先级：
-        1. x-api-key（OpenAI / Anthropic 风格）
-        2. x-goog-api-key（Gemini 风格）
-        3. Authorization: Bearer <key>
-        """
         if key := AuthMiddleware._extract_dedicated_key(headers):
             return key
         auth = headers.get("authorization", "")
@@ -36,7 +47,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _inject_token_state(request: Request, token: dict) -> None:
-        """将已验证的 token 信息注入 request.state。"""
         request.state.token_id = token["id"]
         request.state.token_name = token["name"]
         request.state.token_group_id = token.get("group_id")
@@ -46,12 +56,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     async def _validate_key(key: str) -> tuple[dict | None, str, int]:
-        """
-        查询并验证 API Key。
-        返回 (token_dict, error_msg, status_code)：
-          - 成功：(token, "", 200)
-          - 失败：(None, "error message", 401/503)
-        """
         try:
             async with AsyncSession(engine, expire_on_commit=False) as session:
                 crud = FastCRUD(Token)
@@ -76,26 +80,74 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return None, "invalid token", 401
         return token, "", 200
 
+    @staticmethod
+    async def _check_type2(username: str | None) -> Optional[JSONResponse]:
+        """检查 Type 2 账户余额。None=无限放行，>0=有余额放行，0=无余额429。"""
+        if not username:
+            return JSONResponse({"error": "quota exceeded"}, status_code=429)
+        try:
+            async with AsyncSession(engine, expire_on_commit=False) as session:
+                crud = FastCRUD(User)
+                user = await crud.get(session, username=username)
+                quota_usd = user.get("quota_usd", 0) if user else 0
+                from services.quota import check_account_quota
+                if check_account_quota(quota_usd):
+                    return None  # 放行
+        except Exception as e:
+            logger.error(f"Type 2 账户检查异常，fail open: {e}")
+            return None  # fail open
+        return JSONResponse({"error": "quota exceeded"}, status_code=429)
+
+    @staticmethod
+    async def _check_limits(request: Request, token: dict) -> Optional[JSONResponse]:
+        """
+        检查 Type 1（套餐）和 Type 2（账户余额）。
+        返回 None 表示放行，返回 JSONResponse(429) 表示拒绝。
+
+        优先级：
+        - 有 group → 先检查 Type 1
+          - Type 1 通过 → 放行
+          - Type 1 超限 → 降级到 Type 2
+        - 无 group → 直接 Type 2
+        """
+        group_id = token.get("group_id")
+        username = token.get("username")
+
+        if group_id:
+            # Type 1：套餐规则检查
+            try:
+                from services.rate_limit_service import check_rate_limits
+                redis_client = await _get_redis()
+                async with AsyncSession(engine, expire_on_commit=False) as session:
+                    passed, error_msg = await check_rate_limits(
+                        group_id, redis_client, session
+                    )
+                if passed:
+                    return None  # 套餐通过，放行
+                # 套餐超限 → 降级 Type 2
+                logger.info(f"Type 1 超限 ({error_msg})，降级到 Type 2: username={username}")
+            except Exception as e:
+                logger.error(f"Type 1 限流检查异常，fail open: {e}")
+                return None  # fail open
+
+        # 无 group 或 Type 1 超限 → Type 2
+        return await AuthMiddleware._check_type2(username)
+
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
 
-        # 非 /v1/* 路径完全放行
         if not path.startswith(self.AUTH_PREFIXES):
             return await call_next(request)
 
-        # 可选 API Key 路径（如 /v1/models）
         if path in self.AUTH_OPTIONAL_KEY_PATHS:
-            # 只检查专用 API Key headers，Authorization Bearer 保留给 endpoint 的 JWT 认证
             api_key = self._extract_dedicated_key(request.headers)
             if api_key:
                 token, error_msg, status_code = await self._validate_key(api_key)
                 if token is None:
                     return JSONResponse({"error": error_msg}, status_code=status_code)
                 self._inject_token_state(request, token)
-            # 无专用 key → 放行，由 endpoint 处理 JWT 认证
             return await call_next(request)
 
-        # 必须有 API Key 的路径（/v1/* 其余路径）
         key = self._extract_key(request.headers)
         if not key:
             return JSONResponse({"error": "missing api key"}, status_code=401)
@@ -103,6 +155,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         token, error_msg, status_code = await self._validate_key(key)
         if token is None:
             return JSONResponse({"error": error_msg}, status_code=status_code)
+
+        # 限流检查（Before 阶段）
+        limit_response = await self._check_limits(request, token)
+        if limit_response is not None:
+            return limit_response
 
         self._inject_token_state(request, token)
         return await call_next(request)

@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select, col
 from services.quota import check_quota, update_usage
 from services.auth_service import require_auth, optional_require_auth
-from admin.router import token_router, channel_router, group_router, admin_router, auth_router, me_router, users_router, user_router, group_channel_router, user_group_router
+from admin.router import token_router, channel_router, group_router, admin_router, auth_router, me_router, users_router, user_router, group_channel_router, user_group_router, rate_limit_router
 import yaml
 import json
 import time
@@ -141,6 +141,7 @@ app.include_router(admin_router)
 app.include_router(users_router)
 app.include_router(group_channel_router)
 app.include_router(user_group_router)
+app.include_router(rate_limit_router)
 
 
 def load_config() -> Dict[str, Any]:

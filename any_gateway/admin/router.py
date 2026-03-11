@@ -28,6 +28,9 @@ from db.models import (
     Channel,
     ChannelCreate,
     ChannelUpdate,
+    RateLimit,
+    RateLimitCreate,
+    RateLimitUpdate,
     Token,
     TokenCreate,
     TokenUpdate,
@@ -1047,3 +1050,19 @@ async def remove_user_from_group(
     await session.delete(membership)
     await session.commit()
     return {"username": username, "group_id": group_id, "status": "removed"}
+
+
+rate_limit_router = crud_router(
+    session=async_session_generator,
+    model=RateLimit,
+    create_schema=RateLimitCreate,
+    update_schema=RateLimitUpdate,
+    path="/admin/rate-limits",
+    tags=["Rate Limits"],
+    create_deps=_common_deps,
+    read_deps=_common_deps,
+    read_multi_deps=_common_deps,
+    update_deps=_common_deps,
+    delete_deps=_common_deps,
+    db_delete_deps=_common_deps,
+)
