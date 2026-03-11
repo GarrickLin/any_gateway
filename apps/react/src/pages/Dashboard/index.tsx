@@ -9,6 +9,7 @@ import {
   getStatsOverview, getStatsTokens, getStatsModels,
   getMyStatsOverview, getMyStatsTokens, getMyStatsModels,
 } from '../../api/logs'
+import { getMe } from '../../api/auth'
 import { useAuthStore } from '../../store/auth'
 
 const { Row, Col } = Grid
@@ -40,18 +41,20 @@ const Dashboard: React.FC = () => {
   const [tokens, setTokens] = useState<TokenStat[]>([])
   const [models, setModels] = useState<ModelStat[]>([])
   const [loading, setLoading] = useState(false)
+  const [meData, setMeData] = useState<{ quota_usd: number | null; used_usd: number } | null>(null)
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [ov, tk, md] = await Promise.all(
+      const [ov, tk, md, me] = await Promise.all(
         isAdmin
-          ? [getStatsOverview(), getStatsTokens(), getStatsModels()]
-          : [getMyStatsOverview(), getMyStatsTokens(), getMyStatsModels()],
+          ? [getStatsOverview(), getStatsTokens(), getStatsModels(), getMe()]
+          : [getMyStatsOverview(), getMyStatsTokens(), getMyStatsModels(), getMe()],
       )
       setOverview(ov.data)
       setTokens(tk.data ?? [])
       setModels(md.data ?? [])
+      setMeData({ quota_usd: me.data.quota_usd, used_usd: me.data.used_usd })
     } catch {
       Message.error('数据加载失败')
     } finally {
@@ -62,6 +65,18 @@ const Dashboard: React.FC = () => {
   useEffect(() => { fetchAll() }, [fetchAll])
 
   const maxModelCount = models[0]?.request_count ?? 1
+
+  const formatQuota = (quota: number | null): string => {
+    if (quota === null) return 'NaN'
+    if (quota === 0) return '余额已耗尽'
+    return `$${quota.toFixed(2)}`
+  }
+
+  const quotaColor = (quota: number | null): string => {
+    if (quota === null) return 'inherit'
+    if (quota === 0) return 'rgb(var(--red-6))'
+    return 'rgb(var(--green-6))'
+  }
 
   const adminTokenColumns = [
     { title: '用户名', dataIndex: 'username', render: (v: string) => v ?? '—' },
@@ -136,6 +151,24 @@ const Dashboard: React.FC = () => {
             </Card>
           </Col>
         </Row>
+
+        {/* 账户余额卡片 */}
+        {meData && (
+          <Row gutter={16} style={{ marginBottom: 24 }}>
+            <Col span={8}>
+              <Card>
+                <Statistic
+                  title="账户余额"
+                  value={formatQuota(meData.quota_usd)}
+                  style={{ color: quotaColor(meData.quota_usd) }}
+                />
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  累计消费：${meData.used_usd.toFixed(4)}
+                </Typography.Text>
+              </Card>
+            </Col>
+          </Row>
+        )}
 
         {/* Top 10 表格 */}
         <Row gutter={16}>
