@@ -12,7 +12,7 @@ from fastcrud import FastCRUD
 from loguru import logger
 
 from db.database import engine
-from db.models import Token, UsageLog
+from db.models import Token, UsageLog, User
 
 
 def check_quota(quota_usd: float, used_usd: float) -> bool:
@@ -109,6 +109,53 @@ def check_rolling_cost_limit(current_cost: float, limit: float) -> bool:
     if limit <= 0:
         return True
     return current_cost < limit
+
+
+async def update_user_balance(username: str | None, cost_usd: float) -> None:
+    """
+    响应完成后，原子扣减 User.quota_usd 并累加 User.used_usd。
+
+    - username=None 或 cost_usd<=0：直接返回，不操作 DB
+    - quota_usd=None（无限额度）：只累加 used_usd，不扣减 quota_usd
+    - quota_usd>0：扣减 quota_usd（不低于 0），累加 used_usd
+    - quota_usd=0：只累加 used_usd（已无余额，但记录消费）
+
+    fire-and-forget：内部捕获所有异常，不影响响应返回。
+    """
+    if username is None or cost_usd <= 0:
+        return
+
+    try:
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            # 1. 始终累加 used_usd
+            stmt_used = (
+                sa_update(User)
+                .where(User.username == username)
+                .values(used_usd=User.used_usd + cost_usd)
+            )
+            await session.execute(stmt_used)
+
+            # 2. 仅当 quota_usd IS NOT NULL 时，原子扣减（不低于 0）
+            from sqlalchemy import case, text
+            from sqlalchemy.sql.expression import bindparam
+            stmt_quota = (
+                sa_update(User)
+                .where(
+                    User.username == username,
+                    User.quota_usd.is_not(None),
+                )
+                .values(
+                    quota_usd=case(
+                        (User.quota_usd > cost_usd, User.quota_usd - cost_usd),
+                        else_=0,
+                    )
+                )
+            )
+            await session.execute(stmt_quota)
+
+            await session.commit()
+    except Exception:
+        logger.exception(f"update_user_balance 失败 (username={username})")
 
 
 def check_account_quota(quota_usd: float | None) -> bool:

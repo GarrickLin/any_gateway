@@ -160,3 +160,170 @@ def test_check_account_quota_zero_no_balance():
 def test_check_account_quota_negative_no_balance():
     """quota_usd < 0 视为无余额，应返回 False。"""
     assert check_account_quota(quota_usd=-1.0) is False
+
+
+# ---------------------------------------------------------------------------
+# update_user_balance 测试（使用内存数据库）
+# ---------------------------------------------------------------------------
+
+import asyncio
+import os
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+from sqlmodel import SQLModel
+
+
+# 创建测试用内存数据库引擎
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+async def _make_test_engine():
+    """创建 SQLite 内存数据库引擎。"""
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        echo=False,
+        connect_args={"check_same_thread": False},
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    return engine
+
+
+async def _create_user(engine, username: str, quota_usd, used_usd: float = 0.0):
+    """在测试数据库中创建用户。
+
+    当 quota_usd=None 时，使用原生 SQL 插入以确保存储为 SQL NULL
+    （SQLModel ORM 会将 None 转为 0.0 浮点值）。
+    """
+    from sqlalchemy import text
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        if quota_usd is None:
+            await session.execute(
+                text("INSERT INTO users (username, quota_usd, used_usd, created_at) VALUES (:u, NULL, :used, :now)"),
+                {"u": username, "used": used_usd, "now": now},
+            )
+        else:
+            await session.execute(
+                text("INSERT INTO users (username, quota_usd, used_usd, created_at) VALUES (:u, :quota, :used, :now)"),
+                {"u": username, "quota": quota_usd, "used": used_usd, "now": now},
+            )
+        await session.commit()
+
+
+async def _get_user(engine, username: str):
+    """从测试数据库中查询用户。"""
+    from db.models import User
+    from sqlmodel import select
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        result = await session.execute(select(User).where(User.username == username))
+        return result.scalar_one_or_none()
+
+
+def test_update_user_balance_skips_when_no_username():
+    """username=None 时直接返回，不操作 DB。"""
+    from services.quota import update_user_balance
+    import inspect
+    sig = inspect.signature(update_user_balance)
+    assert "username" in sig.parameters
+    assert "cost_usd" in sig.parameters
+
+    # 调用时 username=None 应不抛异常（通过 asyncio.run 验证）
+    async def _run():
+        await update_user_balance(username=None, cost_usd=1.0)
+    asyncio.run(_run())  # 不抛异常即通过
+
+
+def test_update_user_balance_skips_when_zero_cost():
+    """cost_usd<=0 时直接返回，不操作 DB。"""
+    from services.quota import update_user_balance
+
+    async def _run():
+        await update_user_balance(username="alice", cost_usd=0.0)
+        await update_user_balance(username="alice", cost_usd=-1.0)
+    asyncio.run(_run())  # 不抛异常即通过
+
+
+def test_update_user_balance_deducts_quota_and_accumulates_used():
+    """quota_usd>0 时：扣减 quota_usd，累加 used_usd。"""
+    from services.quota import update_user_balance
+
+    async def _run():
+        engine = await _make_test_engine()
+        await _create_user(engine, "bob", quota_usd=10.0, used_usd=1.0)
+
+        # Monkey-patch quota.py 使用测试引擎
+        import services.quota as quota_mod
+        original_engine = quota_mod.engine
+        quota_mod.engine = engine
+        try:
+            await update_user_balance(username="bob", cost_usd=3.0)
+        finally:
+            quota_mod.engine = original_engine
+
+        user = await _get_user(engine, "bob")
+        assert user is not None
+        # quota_usd 应从 10.0 扣减 3.0 = 7.0
+        assert abs(user.quota_usd - 7.0) < 1e-9
+        # used_usd 应从 1.0 累加 3.0 = 4.0
+        assert abs(user.used_usd - 4.0) < 1e-9
+
+    asyncio.run(_run())
+
+
+def test_update_user_balance_does_not_go_below_zero():
+    """扣减后 quota_usd 不低于 0。"""
+    from services.quota import update_user_balance
+
+    async def _run():
+        engine = await _make_test_engine()
+        await _create_user(engine, "carol", quota_usd=2.0, used_usd=0.0)
+
+        import services.quota as quota_mod
+        original_engine = quota_mod.engine
+        quota_mod.engine = engine
+        try:
+            # cost 超过余额
+            await update_user_balance(username="carol", cost_usd=5.0)
+        finally:
+            quota_mod.engine = original_engine
+
+        user = await _get_user(engine, "carol")
+        assert user is not None
+        # quota_usd 不低于 0
+        assert user.quota_usd >= 0
+        assert abs(user.quota_usd - 0.0) < 1e-9
+        # used_usd 仍然累加
+        assert abs(user.used_usd - 5.0) < 1e-9
+
+    asyncio.run(_run())
+
+
+def test_update_user_balance_skips_quota_deduction_when_none():
+    """quota_usd=None（无限额度）时：只累加 used_usd，不扣减 quota_usd。"""
+    from services.quota import update_user_balance
+
+    async def _run():
+        engine = await _make_test_engine()
+        await _create_user(engine, "dave", quota_usd=None, used_usd=0.5)
+
+        import services.quota as quota_mod
+        original_engine = quota_mod.engine
+        quota_mod.engine = engine
+        try:
+            await update_user_balance(username="dave", cost_usd=2.0)
+        finally:
+            quota_mod.engine = original_engine
+
+        user = await _get_user(engine, "dave")
+        assert user is not None
+        # quota_usd 仍为 None（无限额度，未被改变）
+        assert user.quota_usd is None
+        # used_usd 从 0.5 累加 2.0 = 2.5
+        assert abs(user.used_usd - 2.5) < 1e-9
+
+    asyncio.run(_run())

@@ -19,7 +19,7 @@ from db.database import init_db, engine
 from db.models import Channel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select, col
-from services.quota import check_quota, update_usage
+from services.quota import check_quota, update_usage, update_user_balance
 from services.auth_service import require_auth, optional_require_auth
 from admin.router import token_router, channel_router, group_router, admin_router, auth_router, me_router, users_router, user_router, group_channel_router, user_group_router, rate_limit_router
 import yaml
@@ -333,6 +333,39 @@ async def find_backend_for_model(
         return None
 
 
+async def _update_rate_limit_counters(
+    group_id: str,
+    request_id: str,
+    input_tokens: int,
+    output_tokens: int,
+    cost_usd: float,
+) -> None:
+    """响应后更新 Redis 限流计数（fire-and-forget）。"""
+    try:
+        from middleware.auth import _get_redis
+        from services.rate_limit_redis import build_key, record_request, record_value
+        from fastcrud import FastCRUD
+        from db.models import RateLimit
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        redis_client = await _get_redis()
+        async with AsyncSession(engine) as session:
+            crud = FastCRUD(RateLimit)
+            result = await crud.get_multi(session, group_id=group_id)
+            for rule in result.get("data", []):
+                if rule["value"] <= 0:
+                    continue
+                key = build_key(group_id, rule["limit_type"], rule["window_sec"])
+                if rule["limit_type"] == "request_limit":
+                    await record_request(redis_client, key, rule["window_sec"], request_id)
+                elif rule["limit_type"] == "token_limit":
+                    await record_value(redis_client, key, rule["window_sec"], request_id, input_tokens + output_tokens)
+                elif rule["limit_type"] == "quota_limit":
+                    await record_value(redis_client, key, rule["window_sec"], request_id, cost_usd)
+    except Exception:
+        logger.exception(f"Redis 限流计数更新失败 (group_id={group_id})")
+
+
 async def forward_streaming_request(
     request: Request,
     path: str,
@@ -459,14 +492,17 @@ async def forward_streaming_request(
 
             # fire-and-forget 更新用量
             # TODO: 流式响应中解析 usage 较复杂，暂时记录 0 token，后续实现
+            _stream_cost_usd = 0.0  # TODO: 实现真实定价
+            _stream_input_tokens = 0
+            _stream_output_tokens = 0
             usage_task = asyncio.create_task(
                 update_usage(
                     token_id=getattr(request.state, "token_id", None),
                     channel_id=None,
                     model=model_name,
-                    input_tokens=0,
-                    output_tokens=0,
-                    cost_usd=0.0,  # TODO: 实现真实定价
+                    input_tokens=_stream_input_tokens,
+                    output_tokens=_stream_output_tokens,
+                    cost_usd=_stream_cost_usd,
                     duration_ms=duration_ms,
                     status=response_status or None,
                     is_stream=True,
@@ -476,6 +512,23 @@ async def forward_streaming_request(
             )
             app.state.log_tasks.add(usage_task)
             usage_task.add_done_callback(app.state.log_tasks.discard)
+
+            # After 阶段：更新 Redis 限流计数（fire-and-forget）
+            _stream_group_id = getattr(request.state, "token_group_id", None)
+            if _stream_group_id:
+                asyncio.create_task(_update_rate_limit_counters(
+                    group_id=_stream_group_id,
+                    request_id=request_id,
+                    input_tokens=_stream_input_tokens,
+                    output_tokens=_stream_output_tokens,
+                    cost_usd=_stream_cost_usd,
+                ))
+
+            # After 阶段：扣减用户余额（fire-and-forget）
+            asyncio.create_task(update_user_balance(
+                username=getattr(request.state, "token_username", None),
+                cost_usd=_stream_cost_usd,
+            ))
 
     # 返回流式响应
     return StreamingResponse(
@@ -634,6 +687,7 @@ async def forward_request(
             logger.info(f"当前task数量: {len(app.state.log_tasks)}")
 
             # fire-and-forget 更新用量（不阻塞响应）
+            _cost_usd = 0.0  # TODO: 实现真实定价
             usage_task = asyncio.create_task(
                 update_usage(
                     token_id=getattr(request.state, "token_id", None),
@@ -641,7 +695,7 @@ async def forward_request(
                     model=model_name,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
-                    cost_usd=0.0,  # TODO: 实现真实定价
+                    cost_usd=_cost_usd,
                     duration_ms=duration_ms,
                     status=response.status_code,
                     is_stream=False,
@@ -651,6 +705,23 @@ async def forward_request(
             )
             request.app.state.log_tasks.add(usage_task)
             usage_task.add_done_callback(request.app.state.log_tasks.discard)
+
+            # After 阶段：更新 Redis 限流计数（fire-and-forget）
+            _group_id = getattr(request.state, "token_group_id", None)
+            if _group_id:
+                asyncio.create_task(_update_rate_limit_counters(
+                    group_id=_group_id,
+                    request_id=request_id,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cost_usd=_cost_usd,
+                ))
+
+            # After 阶段：扣减用户余额（fire-and-forget）
+            asyncio.create_task(update_user_balance(
+                username=getattr(request.state, "token_username", None),
+                cost_usd=_cost_usd,
+            ))
 
             # 直接返回后端的响应状态码和内容
             return Response(
