@@ -252,9 +252,9 @@ def test_type1_request_limit_exceeded_returns_429(client):
         resp = _post_chat(client, key)
 
     assert resp.status_code == 429, f"expected 429, got {resp.status_code}: {resp.text}"
-    # Type 1 超限后降级到 Type 2，最终 error 来自 Type 2 "quota exceeded"
+    # Type 1 超限后降级到 Type 2，最终 error 应包含 Type 1 的具体超限原因 request_limit
     body = resp.json().get("error", "")
-    assert "quota" in body.lower(), f"error should mention quota, got: {body}"
+    assert "request_limit" in body.lower(), f"error should mention request_limit, got: {body}"
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +323,9 @@ def test_type1_exceeded_type2_no_quota_returns_429(client):
         resp = _post_chat(client, key)
 
     assert resp.status_code == 429, f"expected 429, got {resp.status_code}: {resp.text}"
+    # Type 1 超限后降级到 Type 2，最终 error 应包含 Type 1 的具体超限原因 request_limit
+    body = resp.json().get("error", "")
+    assert "request_limit" in body.lower(), f"error should mention request_limit, got: {body}"
 
 
 # ---------------------------------------------------------------------------

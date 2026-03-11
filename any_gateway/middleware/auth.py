@@ -81,10 +81,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return token, "", 200
 
     @staticmethod
-    async def _check_type2(username: str | None) -> Optional[JSONResponse]:
-        """检查 Type 2 账户余额。None=无限放行，>0=有余额放行，0=无余额429。"""
+    async def _check_type2(username: str | None, type1_error: str | None = None) -> Optional[JSONResponse]:
+        """检查 Type 2 账户余额。None=无限放行，>0=有余额放行，0=无余额429。
+
+        type1_error: 若 Type 1 超限时的具体原因，Type 2 也拒绝时优先作为 error 字段返回。
+        """
+        error_msg = type1_error or "quota exceeded"
         if not username:
-            return JSONResponse({"error": "quota exceeded"}, status_code=429)
+            return JSONResponse({"error": error_msg}, status_code=429)
         try:
             async with AsyncSession(engine, expire_on_commit=False) as session:
                 crud = FastCRUD(User)
@@ -96,7 +100,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             logger.error(f"Type 2 账户检查异常，fail open: {e}")
             return None  # fail open
-        return JSONResponse({"error": "quota exceeded"}, status_code=429)
+        return JSONResponse({"error": error_msg}, status_code=429)
 
     @staticmethod
     async def _check_limits(request: Request, token: dict) -> Optional[JSONResponse]:
@@ -124,13 +128,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     )
                 if passed:
                     return None  # 套餐通过，放行
-                # 套餐超限 → 降级 Type 2
+                # 套餐超限 → 降级 Type 2，保存 Type 1 超限原因
                 logger.info(f"Type 1 超限 ({error_msg})，降级到 Type 2: username={username}")
+                return await AuthMiddleware._check_type2(username, type1_error=error_msg)
             except Exception as e:
                 logger.error(f"Type 1 限流检查异常，fail open: {e}")
                 return None  # fail open
 
-        # 无 group 或 Type 1 超限 → Type 2
+        # 无 group → Type 2
         return await AuthMiddleware._check_type2(username)
 
     async def dispatch(self, request: Request, call_next):
