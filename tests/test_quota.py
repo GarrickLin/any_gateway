@@ -232,10 +232,25 @@ def test_update_user_balance_skips_when_no_username():
     assert "username" in sig.parameters
     assert "cost_usd" in sig.parameters
 
-    # 调用时 username=None 应不抛异常（通过 asyncio.run 验证）
     async def _run():
-        await update_user_balance(username=None, cost_usd=1.0)
-    asyncio.run(_run())  # 不抛异常即通过
+        engine = await _make_test_engine()
+        await _create_user(engine, "skip_no_user", quota_usd=10.0, used_usd=0.0)
+
+        import services.quota as quota_mod
+        original_engine = quota_mod.engine
+        quota_mod.engine = engine
+        try:
+            await update_user_balance(username=None, cost_usd=1.0)
+        finally:
+            quota_mod.engine = original_engine
+
+        user = await _get_user(engine, "skip_no_user")
+        assert user is not None
+        # username=None 应跳过 DB 操作，quota_usd 和 used_usd 均不变
+        assert abs(user.quota_usd - 10.0) < 1e-9
+        assert abs(user.used_usd - 0.0) < 1e-9
+
+    asyncio.run(_run())
 
 
 def test_update_user_balance_skips_when_zero_cost():
@@ -243,9 +258,25 @@ def test_update_user_balance_skips_when_zero_cost():
     from services.quota import update_user_balance
 
     async def _run():
-        await update_user_balance(username="alice", cost_usd=0.0)
-        await update_user_balance(username="alice", cost_usd=-1.0)
-    asyncio.run(_run())  # 不抛异常即通过
+        engine = await _make_test_engine()
+        await _create_user(engine, "alice", quota_usd=10.0, used_usd=0.0)
+
+        import services.quota as quota_mod
+        original_engine = quota_mod.engine
+        quota_mod.engine = engine
+        try:
+            await update_user_balance(username="alice", cost_usd=0.0)
+            await update_user_balance(username="alice", cost_usd=-1.0)
+        finally:
+            quota_mod.engine = original_engine
+
+        user = await _get_user(engine, "alice")
+        assert user is not None
+        # cost_usd<=0 应跳过 DB 操作，quota_usd 和 used_usd 均不变
+        assert abs(user.quota_usd - 10.0) < 1e-9
+        assert abs(user.used_usd - 0.0) < 1e-9
+
+    asyncio.run(_run())
 
 
 def test_update_user_balance_deducts_quota_and_accumulates_used():

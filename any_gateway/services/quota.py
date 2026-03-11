@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import update as sa_update
+from sqlalchemy import case, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastcrud import FastCRUD
 from loguru import logger
@@ -136,8 +136,6 @@ async def update_user_balance(username: str | None, cost_usd: float) -> None:
             await session.execute(stmt_used)
 
             # 2. 仅当 quota_usd IS NOT NULL 时，原子扣减（不低于 0）
-            from sqlalchemy import case, text
-            from sqlalchemy.sql.expression import bindparam
             stmt_quota = (
                 sa_update(User)
                 .where(
