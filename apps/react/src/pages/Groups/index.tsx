@@ -5,6 +5,7 @@ import {
 } from '@arco-design/web-react'
 import { getGroups, createGroup, updateGroup, deleteGroup } from '../../api/groups'
 import { getChannels } from '../../api/channels'
+import { getRateLimits, createRateLimit, deleteRateLimit } from '../../api/rateLimits'
 import client from '../../api/client'
 
 const Groups: React.FC = () => {
@@ -13,6 +14,17 @@ const Groups: React.FC = () => {
   const [visible, setVisible] = useState(false)
   const [editing, setEditing] = useState<any>(null)
   const [form] = Form.useForm()
+
+  // 管理规则相关状态
+  const [ruleModalOpen, setRuleModalOpen] = useState(false)
+  const [managingRuleGroup, setManagingRuleGroup] = useState<any>(null)
+  const [rules, setRules] = useState<any[]>([])
+  const [ruleLoading, setRuleLoading] = useState(false)
+  const [newLimitType, setNewLimitType] = useState<string>('request_limit')
+  const [newWindowNum, setNewWindowNum] = useState<number>(1)
+  const [newWindowUnit, setNewWindowUnit] = useState<number>(60)
+  const [newValue, setNewValue] = useState<number>(10)
+  const [addRuleLoading, setAddRuleLoading] = useState(false)
 
   // 管理渠道相关状态
   const [channelModalOpen, setChannelModalOpen] = useState(false)
@@ -73,6 +85,66 @@ const Groups: React.FC = () => {
     } catch {
       Message.error('删除失败')
     }
+  }
+
+  // 加载限流规则
+  const fetchRules = async (groupId: string) => {
+    setRuleLoading(true)
+    try {
+      const res = await getRateLimits(groupId)
+      const raw = res.data?.data ?? res.data
+      setRules(Array.isArray(raw) ? raw : [])
+    } catch { Message.error('加载规则失败') }
+    finally { setRuleLoading(false) }
+  }
+
+  // 打开"管理规则" Modal
+  const handleOpenRules = (record: any) => {
+    setManagingRuleGroup(record)
+    setRuleModalOpen(true)
+    fetchRules(record.id)
+  }
+
+  // 添加规则
+  const handleAddRule = async () => {
+    setAddRuleLoading(true)
+    try {
+      await createRateLimit({
+        group_id: managingRuleGroup.id,
+        window_sec: newWindowNum * newWindowUnit,
+        limit_type: newLimitType as any,
+        value: newValue,
+      })
+      Message.success('规则已添加')
+      fetchRules(managingRuleGroup.id)
+      setNewLimitType('request_limit')
+      setNewWindowNum(1)
+      setNewWindowUnit(60)
+      setNewValue(10)
+    } catch { Message.error('添加失败') }
+    finally { setAddRuleLoading(false) }
+  }
+
+  // 删除规则
+  const handleDeleteRule = async (ruleId: string) => {
+    try {
+      await deleteRateLimit(ruleId)
+      Message.success('已删除')
+      fetchRules(managingRuleGroup.id)
+    } catch { Message.error('删除失败') }
+  }
+
+  // 窗口时长反显示
+  const formatWindowSec = (sec: number): string => {
+    if (sec % 86400 === 0) return `${sec / 86400} 天`
+    if (sec % 3600 === 0) return `${sec / 3600} 小时`
+    return `${Math.round(sec / 60)} 分钟`
+  }
+
+  const limitTypeLabel: Record<string, string> = {
+    request_limit: '请求数',
+    token_limit: 'Token',
+    quota_limit: '金额 (USD)',
   }
 
   // 打开"管理渠道" Modal，加载该分组已有渠道和所有渠道
@@ -170,6 +242,7 @@ const Groups: React.FC = () => {
         <Space>
           <Button size="mini" type="text" onClick={() => handleOpen(row)}>编辑</Button>
           <Button size="mini" type="text" onClick={() => openChannelModal(row)}>管理渠道</Button>
+          <Button size="mini" type="text" onClick={() => handleOpenRules(row)}>管理规则</Button>
           <Popconfirm title="确认删除此 Group？" onOk={() => handleDelete(row.id)}>
             <Button size="mini" type="text" status="danger">删除</Button>
           </Popconfirm>
@@ -253,6 +326,52 @@ const Groups: React.FC = () => {
           pagination={false}
           noDataElement={<div style={{ textAlign: 'center', color: '#999', padding: 16 }}>暂无渠道，请添加</div>}
         />
+      </Modal>
+      {/* 管理限流规则 Modal */}
+      <Modal
+        title={`管理限流规则 — ${managingRuleGroup?.name}`}
+        visible={ruleModalOpen}
+        onCancel={() => setRuleModalOpen(false)}
+        footer={null}
+        style={{ width: 600 }}
+      >
+        <Table
+          loading={ruleLoading}
+          data={rules}
+          rowKey="id"
+          pagination={false}
+          columns={[
+            { title: '类型', dataIndex: 'limit_type', render: (v: string) => limitTypeLabel[v] ?? v },
+            { title: '窗口', dataIndex: 'window_sec', render: (v: number) => formatWindowSec(v) },
+            { title: '限制值', dataIndex: 'value' },
+            {
+              title: '操作', render: (_: any, record: any) => (
+                <Popconfirm title="确认删除？" onOk={() => handleDeleteRule(record.id)}>
+                  <Button type="text" status="danger" size="small">删除</Button>
+                </Popconfirm>
+              )
+            },
+          ]}
+        />
+
+        <div style={{ marginTop: 16 }}>
+          <Typography.Text bold>添加规则</Typography.Text>
+          <Space style={{ marginTop: 8, flexWrap: 'wrap' }}>
+            <Select value={newLimitType} onChange={setNewLimitType} style={{ width: 120 }}>
+              <Select.Option value="request_limit">请求数</Select.Option>
+              <Select.Option value="token_limit">Token</Select.Option>
+              <Select.Option value="quota_limit">金额 (USD)</Select.Option>
+            </Select>
+            <InputNumber min={1} value={newWindowNum} onChange={(v) => setNewWindowNum(v ?? 1)} style={{ width: 80 }} />
+            <Select value={newWindowUnit} onChange={setNewWindowUnit} style={{ width: 80 }}>
+              <Select.Option value={60}>分钟</Select.Option>
+              <Select.Option value={3600}>小时</Select.Option>
+              <Select.Option value={86400}>天</Select.Option>
+            </Select>
+            <InputNumber min={0} value={newValue} onChange={(v) => setNewValue(v ?? 0)} style={{ width: 100 }} placeholder="限制值" />
+            <Button type="primary" loading={addRuleLoading} onClick={handleAddRule}>添加</Button>
+          </Space>
+        </div>
       </Modal>
     </div>
   )
