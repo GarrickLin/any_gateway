@@ -94,6 +94,54 @@ def test_user_group_membership_unique_constraint():
             s.commit()
 
 
+# =======================
+# Task 1: RateLimit 表 + User 计费字段
+# =======================
+
+
+def test_rate_limit_importable():
+    """RateLimit 模型可以导入，表名正确。"""
+    from db.models import RateLimit
+    assert RateLimit.__tablename__ == "rate_limits"
+
+
+def test_rate_limit_id_auto_generated():
+    """RateLimit 创建时 id 自动生成（非空）。"""
+    from db.models import UserGroup, RateLimit
+    grp = UserGroup(name="rl-test-grp")
+    # id 尚未入库，但 default_factory 应立即生成
+    rl = RateLimit(group_id="dummy-group-id", window_sec=60, type="request_limit", value=100)
+    assert rl.id is not None and len(rl.id) > 0
+
+
+def test_rate_limit_value_zero_valid():
+    """RateLimit.value=0 合法（表示禁用该限制）。"""
+    from db.models import RateLimit
+    rl = RateLimit(group_id="dummy", window_sec=60, type="token_limit", value=0)
+    assert rl.value == 0
+
+
+def test_user_quota_usd_default():
+    """User.quota_usd 默认值为 0。"""
+    from db.models import User
+    u = User(username="test-quota-user")
+    assert u.quota_usd == 0
+
+
+def test_user_used_usd_default():
+    """User.used_usd 默认值为 0。"""
+    from db.models import User
+    u = User(username="test-used-user")
+    assert u.used_usd == 0
+
+
+def test_user_quota_usd_none_valid():
+    """User.quota_usd=None 合法（表示无限额度）。"""
+    from db.models import User
+    u = User(username="test-unlimited-user", quota_usd=None)
+    assert u.quota_usd is None
+
+
 def test_init_db_creates_default_group():
     """init_db 应在启动时幂等地创建 default 分组。"""
     import asyncio

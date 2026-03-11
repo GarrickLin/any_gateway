@@ -184,6 +184,8 @@ class User(SQLModel, table=True):
     __tablename__ = "users"
     username: str = Field(primary_key=True)
     created_at: str = Field(default_factory=utcnow)
+    quota_usd: float | None = Field(default=0)   # None=无限，0=无余额，>0=有余额
+    used_usd: float = Field(default=0)            # 累计消费
 
 
 # =======================
@@ -206,3 +208,30 @@ class GroupChannel(SQLModel, table=True):
     __tablename__ = "group_channels"
     group_id: str = Field(foreign_key="user_groups.id", primary_key=True)
     channel_id: str = Field(foreign_key="channels.id", primary_key=True)
+
+
+# =======================
+# RateLimit（分组限速规则）
+# =======================
+
+
+class RateLimitBase(SQLModel):
+    group_id: str = Field(foreign_key="user_groups.id")
+    window_sec: int        # 滚动窗口秒数
+    type: str              # "request_limit" | "token_limit" | "quota_limit"
+    value: float           # 限制值，0 = 禁用
+
+
+class RateLimit(RateLimitBase, table=True):
+    __tablename__ = "rate_limits"
+    id: str = Field(default_factory=lambda: uuid4().hex, primary_key=True)
+
+
+class RateLimitCreate(RateLimitBase):
+    pass
+
+
+class RateLimitUpdate(SQLModel):
+    window_sec: int | None = None
+    type: str | None = None
+    value: float | None = None
