@@ -16,8 +16,6 @@ def utcnow() -> str:
 
 class UserGroupBase(SQLModel):
     name: str = Field(unique=True)
-    rpm_limit: int = Field(default=60)
-    tpm_limit: int = Field(default=1_000_000)
     priority: int = Field(default=1)
     multiplier: float = Field(default=1.0)
 
@@ -33,8 +31,6 @@ class UserGroupCreate(UserGroupBase):
 
 
 class UserGroupUpdate(SQLModel):
-    rpm_limit: int | None = None
-    tpm_limit: int | None = None
     priority: int | None = None
     multiplier: float | None = None
 

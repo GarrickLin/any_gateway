@@ -43,11 +43,9 @@ def test_group_channel_importable():
     assert GroupChannel.__tablename__ == "group_channels"
 
 
-def test_usergroup_tpm_limit_default():
+def test_usergroup_defaults():
     from db.models import UserGroup
     g = UserGroup(name="test")
-    assert g.tpm_limit == 1_000_000
-    assert g.rpm_limit == 60
     assert g.priority == 1
     assert g.multiplier == 1.0
 
@@ -179,7 +177,5 @@ def test_init_db_creates_default_group():
     grp = asyncio.run(_run())
     assert grp is not None
     assert grp.name == "default"
-    assert grp.rpm_limit == 60
-    assert grp.tpm_limit == 1_000_000
     assert grp.priority == 1
     assert grp.multiplier == 1.0

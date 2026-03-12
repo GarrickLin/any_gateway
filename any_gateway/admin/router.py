@@ -1008,8 +1008,6 @@ async def get_user_groups_for_user(
             "id": g.id,
             "name": g.name,
             "priority": g.priority,
-            "rpm_limit": g.rpm_limit,
-            "tpm_limit": g.tpm_limit,
         }
         for g in groups
     ]

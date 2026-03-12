@@ -246,8 +246,6 @@ const UserGroupTab: React.FC = () => {
 
   const userGroupColumns = [
     { title: '分组名称', dataIndex: 'name' },
-    { title: 'RPM 限制', dataIndex: 'rpm_limit' },
-    { title: 'TPM 限制', dataIndex: 'tpm_limit' },
     { title: 'Priority', dataIndex: 'priority' },
     {
       title: '操作',

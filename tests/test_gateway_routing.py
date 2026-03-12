@@ -37,8 +37,8 @@ def setup():
         from db.models import UserGroup, Channel, User, UserGroupMembership, GroupChannel
         async with AsyncSession(ENGINE, expire_on_commit=False) as s:
             # 两个分组，优先级不同
-            g_high = UserGroup(name="premium", priority=10, tpm_limit=1_000_000)
-            g_low = UserGroup(name="standard", priority=1, tpm_limit=1_000_000)
+            g_high = UserGroup(name="premium", priority=10)
+            g_low = UserGroup(name="standard", priority=1)
             s.add_all([g_high, g_low])
             await s.flush()
 

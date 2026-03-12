@@ -32,7 +32,7 @@ def setup_db():
         # 插入 default 分组
         from db.models import UserGroup
         async with AsyncSession(ENGINE, expire_on_commit=False) as s:
-            s.add(UserGroup(name="default", rpm_limit=60, tpm_limit=1_000_000))
+            s.add(UserGroup(name="default"))
             await s.commit()
     asyncio.run(_run())
 

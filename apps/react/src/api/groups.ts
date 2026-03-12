@@ -3,8 +3,6 @@ import client from './client'
 export interface UserGroup {
   id: string
   name: string
-  rpm_limit: number
-  tpm_limit: number
   priority: number
   multiplier: number
   created_at: string
@@ -12,8 +10,6 @@ export interface UserGroup {
 
 export interface UserGroupCreate {
   name: string
-  rpm_limit?: number
-  tpm_limit?: number
   priority?: number
   multiplier?: number
 }

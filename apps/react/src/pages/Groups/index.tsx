@@ -231,8 +231,6 @@ const Groups: React.FC = () => {
 
   const columns = [
     { title: '名称', dataIndex: 'name' },
-    { title: 'RPM 限制', dataIndex: 'rpm_limit' },
-    { title: 'TPM 限制', dataIndex: 'tpm_limit' },
     { title: 'Priority', dataIndex: 'priority' },
     { title: '费率倍数', dataIndex: 'multiplier' },
     { title: '创建时间', dataIndex: 'created_at', render: (v: string) => v?.slice(0, 19) },
@@ -270,12 +268,6 @@ const Groups: React.FC = () => {
         <Form form={form} onSubmit={handleSubmit} layout="vertical">
           <Form.Item field="name" label="名称" rules={[{ required: true }]}>
             <Input placeholder="如：core-dev" disabled={!!editing} />
-          </Form.Item>
-          <Form.Item field="rpm_limit" label="RPM 限制" initialValue={60}>
-            <InputNumber min={1} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item field="tpm_limit" label="TPM 限制" initialValue={100000}>
-            <InputNumber min={1} style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item field="priority" label="Priority" initialValue={1}>
             <InputNumber min={1} style={{ width: '100%' }} />
