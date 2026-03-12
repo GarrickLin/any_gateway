@@ -78,8 +78,10 @@ return tostring(total)
 """
 
 
-def build_key(group_id: str, limit_type: str, window_sec: int) -> str:
-    """构造 Redis key。"""
+def build_key(group_id: str, limit_type: str, window_sec: int, username: str | None = None) -> str:
+    """构造 Redis key。username 存在时为 per-user 级别，否则为 group 级别。"""
+    if username:
+        return f"rate:{group_id}:user:{username}:{limit_type}:{window_sec}"
     return f"rate:{group_id}:{limit_type}:{window_sec}"
 
 

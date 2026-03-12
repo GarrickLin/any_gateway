@@ -18,9 +18,11 @@ async def check_rate_limits(
     group_id: str,
     redis_client,
     session: AsyncSession,
+    username: str | None = None,
 ) -> tuple[bool, str | None]:
     """
     检查 group 的所有 RateLimit 规则。
+    username 存在时使用 per-user key，否则使用 group 级 key（共用同一套规则）。
     返回 (True, None) 表示全部通过，(False, "error msg") 表示超限。
     value=0 的规则跳过（禁用）。
     Redis 不可用时 fail open（get_window_* 已内部处理）。
@@ -37,7 +39,7 @@ async def check_rate_limits(
         if value <= 0:
             continue  # 禁用规则
 
-        key = build_key(group_id, limit_type, window_sec)
+        key = build_key(group_id, limit_type, window_sec, username)
 
         if limit_type == "request_limit":
             current = await get_window_count(redis_client, key, window_sec)

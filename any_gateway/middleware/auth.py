@@ -124,7 +124,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 redis_client = await _get_redis()
                 async with AsyncSession(engine, expire_on_commit=False) as session:
                     passed, error_msg = await check_rate_limits(
-                        group_id, redis_client, session
+                        group_id, redis_client, session, username=username
                     )
                 if passed:
                     return None  # 套餐通过，放行
