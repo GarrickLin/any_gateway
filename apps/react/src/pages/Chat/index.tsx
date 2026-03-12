@@ -165,10 +165,17 @@ const Chat: React.FC = () => {
       let errMsg = `${response.status}`
       try {
         const body = await response.json()
-        errMsg = body?.error ?? errMsg
+        const raw = body?.error
+        errMsg = typeof raw === 'string' ? raw : (raw?.message ?? `${response.status}`)
       } catch { /* noop */ }
       Message.error(`请求失败：${errMsg}`)
-      setHistory(prev => prev.slice(0, -1))
+      setHistory(prev => {
+        const last = prev[prev.length - 1]
+        if (last?.role === 'assistant' && !last.content) {
+          return [...prev.slice(0, -1), { role: 'assistant', content: `❌ 请求失败：${errMsg}` }]
+        }
+        return prev
+      })
       return
     }
     let assistantContent = ''
@@ -223,10 +230,17 @@ const Chat: React.FC = () => {
       let errMsg = `${response.status}`
       try {
         const body = await response.json()
-        errMsg = body?.error ?? errMsg
+        const raw = body?.error
+        errMsg = typeof raw === 'string' ? raw : (raw?.message ?? `${response.status}`)
       } catch { /* noop */ }
       Message.error(`请求失败：${errMsg}`)
-      setHistory(prev => prev.slice(0, -1))
+      setHistory(prev => {
+        const last = prev[prev.length - 1]
+        if (last?.role === 'assistant' && !last.content) {
+          return [...prev.slice(0, -1), { role: 'assistant', content: `❌ 请求失败：${errMsg}` }]
+        }
+        return prev
+      })
       return
     }
     let assistantContent = ''
