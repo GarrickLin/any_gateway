@@ -126,23 +126,39 @@ const parseResponseContent = (bodyStr?: string): string => {
       } catch { /* 忽略无效行 */ }
     }
 
-    if (textParts.length > 0) return textParts.join('')
-
-    // 纯 tool-use 响应：格式化工具调用内容
+    // 合并文本和工具调用（可能同时存在）
+    const parts: string[] = []
+    if (textParts.length > 0) parts.push(textParts.join(''))
     if (toolBlocks.size > 0) {
-      return Array.from(toolBlocks.values()).map(({ name, partialJson }) => {
+      parts.push(Array.from(toolBlocks.values()).map(({ name, partialJson }) => {
         let input = partialJson
         try { input = JSON.stringify(JSON.parse(partialJson), null, 2) } catch { /* keep raw */ }
         return `**${name}**\n\`\`\`json\n${input}\n\`\`\``
-      }).join('\n\n')
+      }).join('\n\n'))
     }
-
-    return ''
+    return parts.join('\n\n')
   }
 
   // 非流式：直接解析 JSON
   try {
     const obj = JSON.parse(bodyStr) as Record<string, unknown>
+
+    // Anthropic 非流式：content 数组可能同时包含 text 和 tool_use 块
+    const content = obj.content as Array<Record<string, unknown>> | undefined
+    if (Array.isArray(content) && content.length > 0) {
+      const parts: string[] = []
+      for (const block of content) {
+        if (typeof block.text === 'string') {
+          parts.push(block.text)
+        } else if (block.type === 'tool_use') {
+          let input = ''
+          try { input = JSON.stringify(block.input, null, 2) } catch { input = String(block.input) }
+          parts.push(`**${block.name as string}**\n\`\`\`json\n${input}\n\`\`\``)
+        }
+      }
+      if (parts.length > 0) return parts.join('\n\n')
+    }
+
     return extractDeltaText(obj) ?? JSON.stringify(obj, null, 2)
   } catch {
     return bodyStr
