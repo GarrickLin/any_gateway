@@ -127,6 +127,8 @@ class UsageLog(SQLModel, table=True):
     model: str | None = None
     input_tokens: int = Field(default=0)
     output_tokens: int = Field(default=0)
+    cache_read_tokens: int = Field(default=0)
+    cache_creation_tokens: int = Field(default=0)
     cost_usd: float = Field(default=0)
     duration_ms: float = Field(default=0)
     status: int | None = None

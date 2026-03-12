@@ -323,6 +323,16 @@ const Logs: React.FC = () => {
     { title: '模型', dataIndex: 'model' },
     { title: '输入 Token', dataIndex: 'input_tokens' },
     { title: '输出 Token', dataIndex: 'output_tokens' },
+    {
+      title: 'Cache 读取',
+      dataIndex: 'cache_read_tokens',
+      render: (v: number) => v > 0 ? v : '-',
+    },
+    {
+      title: 'Cache 写入',
+      dataIndex: 'cache_creation_tokens',
+      render: (v: number) => v > 0 ? v : '-',
+    },
     { title: '耗时(ms)', dataIndex: 'duration_ms', render: (v: number) => v?.toFixed(0) },
     {
       title: '状态码',

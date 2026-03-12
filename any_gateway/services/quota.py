@@ -40,6 +40,8 @@ async def update_usage(
     is_stream: bool,
     username: str | None = None,
     request_id: str | None = None,  # 新增：外部传入时作为 UsageLog.id
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
 ) -> None:
     """
     1. 递增 Token.used_usd（通过 SQL 级原子 UPDATE）
@@ -67,6 +69,8 @@ async def update_usage(
                 model=model,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_creation_tokens=cache_creation_tokens,
                 cost_usd=cost_usd,
                 duration_ms=duration_ms,
                 status=status,

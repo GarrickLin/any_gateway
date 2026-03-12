@@ -29,6 +29,7 @@ import asyncio
 import random
 import httpx
 import log_writer
+import dataclasses
 from uuid import uuid4
 
 
@@ -339,8 +340,9 @@ async def _update_rate_limit_counters(
     input_tokens: int,
     output_tokens: int,
     cost_usd: float,
+    username: str | None = None,
 ) -> None:
-    """响应后更新 Redis 限流计数（fire-and-forget）。"""
+    """响应后更新 Redis 限流计数（fire-and-forget）。username 存在时使用 per-user key。"""
     try:
         from middleware.auth import _get_redis
         from services.rate_limit_redis import build_key, record_request, record_value
@@ -355,7 +357,7 @@ async def _update_rate_limit_counters(
             for rule in result.get("data", []):
                 if rule["value"] <= 0:
                     continue
-                key = build_key(group_id, rule["limit_type"], rule["window_sec"])
+                key = build_key(group_id, rule["limit_type"], rule["window_sec"], username)
                 if rule["limit_type"] == "request_limit":
                     await record_request(redis_client, key, rule["window_sec"], request_id)
                 elif rule["limit_type"] == "token_limit":
@@ -364,6 +366,142 @@ async def _update_rate_limit_counters(
                     await record_value(redis_client, key, rule["window_sec"], request_id, cost_usd)
     except Exception:
         logger.exception(f"Redis 限流计数更新失败 (group_id={group_id})")
+
+
+@dataclasses.dataclass
+class StreamUsage:
+    """流式响应 token 用量，支持三种协议的 cache 字段。"""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0    # Anthropic: cache_read_input_tokens / OpenAI: cached_tokens / Gemini: cachedContentTokenCount
+    cache_creation_tokens: int = 0  # Anthropic: cache_creation_input_tokens（OpenAI/Gemini 无此字段，留 0）
+
+
+def inject_stream_options(body: dict, provider: str) -> None:
+    """
+    OpenAI 协议流式请求需要注入 stream_options.include_usage=true，
+    才能在流中获取 token 用量数据。Anthropic/Gemini 不需要。
+    就地修改 body dict，不返回值。
+    """
+    if provider.lower() not in ("anthropic", "gemini"):
+        body.setdefault("stream_options", {})["include_usage"] = True
+
+
+def _safe_int(value: object, default: int = 0) -> int:
+    """安全转换为 int，转换失败时返回 default。"""
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_stream_usage(chunks: list[str], provider: str) -> StreamUsage:
+    """
+    从累积的 SSE chunks 中解析 input/output token 用量。
+
+    协议差异：
+    - openai:    最后一个含非 null usage 的 data chunk，字段 prompt_tokens / completion_tokens
+    - anthropic: message_start 事件取 input_tokens，message_delta 事件取 output_tokens
+    - gemini:    最后一个含 usageMetadata 的 data chunk，字段 promptTokenCount / candidatesTokenCount
+    - 其他/空:   降级为 openai 格式，找不到则返回 StreamUsage()
+
+    :param chunks: forward_streaming_request 中累积的原始 SSE 行列表
+    :param provider: 渠道 provider 字符串（来自 Channel.provider）
+    :return: StreamUsage dataclass
+    """
+    p = (provider or "").lower()
+
+    if p == "anthropic":
+        return _parse_anthropic_usage(chunks)
+    elif p == "gemini":
+        return _parse_gemini_usage(chunks)
+    else:
+        result = _parse_openai_usage(chunks)
+        # 零用量可能是真实值或解析失败（provider 未知时无法区分），此 warning 仅供排查配置问题
+        if result.input_tokens == 0 and result.output_tokens == 0 and p not in ("openai", ""):
+            logger.warning(f"parse_stream_usage: provider={provider!r} 未匹配已知协议，已降级为 OpenAI 格式，用量可能为 0")
+        return result
+
+
+def _parse_openai_usage(chunks: list[str]) -> StreamUsage:
+    """扫描所有 data 行，取最后一个含非 null usage 的 JSON。"""
+    result = StreamUsage()
+    for line in chunks:
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if payload == "[DONE]":
+            continue
+        try:
+            obj = json.loads(payload)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        usage = obj.get("usage")
+        if usage and isinstance(usage, dict):
+            pt = usage.get("prompt_tokens")
+            ct = usage.get("completion_tokens")
+            if pt is not None and ct is not None:
+                result.input_tokens = _safe_int(pt)
+                result.output_tokens = _safe_int(ct)
+                # OpenAI prompt caching: usage.prompt_tokens_details.cached_tokens
+                details = usage.get("prompt_tokens_details")
+                if details and isinstance(details, dict):
+                    result.cache_read_tokens = _safe_int(details.get("cached_tokens", 0))
+    return result
+
+
+def _parse_anthropic_usage(chunks: list[str]) -> StreamUsage:
+    """
+    状态机解析 Anthropic SSE：
+    - event: message_start → 取 message.usage.input_tokens /
+                              cache_read_input_tokens / cache_creation_input_tokens
+    - event: message_delta → 取 usage.output_tokens
+    """
+    result = StreamUsage()
+    pending_event = None
+    for line in chunks:
+        stripped = line.strip()
+        if stripped.startswith("event:"):
+            pending_event = stripped[6:].strip()
+            continue
+        if stripped.startswith("data:") and pending_event:
+            payload = stripped[5:].strip()
+            try:
+                obj = json.loads(payload)
+            except (json.JSONDecodeError, ValueError):
+                pending_event = None
+                continue
+            if pending_event == "message_start":
+                usage = obj.get("message", {}).get("usage", {})
+                result.input_tokens = _safe_int(usage.get("input_tokens", 0))
+                result.cache_read_tokens = _safe_int(usage.get("cache_read_input_tokens", 0))
+                result.cache_creation_tokens = _safe_int(usage.get("cache_creation_input_tokens", 0))
+            elif pending_event == "message_delta":
+                usage = obj.get("usage", {})
+                result.output_tokens = _safe_int(usage.get("output_tokens", 0))
+            pending_event = None
+    return result
+
+
+def _parse_gemini_usage(chunks: list[str]) -> StreamUsage:
+    """扫描所有 data 行，取最后一个含 usageMetadata 的 JSON。"""
+    result = StreamUsage()
+    for line in chunks:
+        stripped = line.strip()
+        if not stripped.startswith("data:"):
+            continue
+        payload = stripped[5:].strip()
+        try:
+            obj = json.loads(payload)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        meta = obj.get("usageMetadata")
+        if meta and isinstance(meta, dict):
+            result.input_tokens = _safe_int(meta.get("promptTokenCount", 0))
+            result.output_tokens = _safe_int(meta.get("candidatesTokenCount", 0))
+            result.cache_read_tokens = _safe_int(meta.get("cachedContentTokenCount", 0))
+    return result
 
 
 async def forward_streaming_request(
@@ -375,7 +513,8 @@ async def forward_streaming_request(
     backend_url: str,
     model_name: Optional[str],
     start_time: float,
-    request_id: str,          # 新增
+    request_id: str,
+    provider: str = "",
 ) -> StreamingResponse:
     """
     转发流式请求到后端服务并返回 SSE 流式响应。
@@ -491,10 +630,15 @@ async def forward_streaming_request(
             logger.info(f"流式请求日志已入队, 当前task数量: {len(app.state.log_tasks)}")
 
             # fire-and-forget 更新用量
-            # TODO: 流式响应中解析 usage 较复杂，暂时记录 0 token，后续实现
             _stream_cost_usd = 0.0  # TODO: 实现真实定价
-            _stream_input_tokens = 0
-            _stream_output_tokens = 0
+            _stream_usage = parse_stream_usage(accumulated_chunks, provider)
+            _stream_input_tokens = _stream_usage.input_tokens
+            _stream_output_tokens = _stream_usage.output_tokens
+            logger.debug(
+                "流式用量解析完成: provider=%r input=%d output=%d cache_read=%d cache_creation=%d",
+                provider, _stream_input_tokens, _stream_output_tokens,
+                _stream_usage.cache_read_tokens, _stream_usage.cache_creation_tokens,
+            )
             usage_task = asyncio.create_task(
                 update_usage(
                     token_id=getattr(request.state, "token_id", None),
@@ -508,6 +652,8 @@ async def forward_streaming_request(
                     is_stream=True,
                     username=getattr(request.state, "token_username", None),
                     request_id=request_id,
+                    cache_read_tokens=_stream_usage.cache_read_tokens,
+                    cache_creation_tokens=_stream_usage.cache_creation_tokens,
                 )
             )
             app.state.log_tasks.add(usage_task)
@@ -522,6 +668,7 @@ async def forward_streaming_request(
                     input_tokens=_stream_input_tokens,
                     output_tokens=_stream_output_tokens,
                     cost_usd=_stream_cost_usd,
+                    username=getattr(request.state, "token_username", None),
                 ))
 
             # After 阶段：扣减用户余额（fire-and-forget）
@@ -605,20 +752,27 @@ async def forward_request(
     # 提取模型名称和检查是否为流式请求
     model_name = None
     is_stream_request = False
+    body_json_parsed: Optional[dict] = None
     try:
         if body:
-            body_json = json.loads(body)
-            model_name = body_json.get("model")
-            is_stream_request = body_json.get("stream", False)
+            body_json_parsed = json.loads(body)
+            model_name = body_json_parsed.get("model")
+            is_stream_request = body_json_parsed.get("stream", False)
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         pass
 
     # 如果请求要求流式，使用流式转发
     if is_stream_request:
         logger.info("检测到流式请求，使用 SSE 转发")
+        # OpenAI 协议需要注入 stream_options.include_usage=true，
+        # 否则上游不会在流中返回 usage 数据
+        if body_json_parsed is not None and provider.lower() not in ("anthropic", "gemini"):
+            inject_stream_options(body_json_parsed, provider)
+            body = json.dumps(body_json_parsed).encode("utf-8")
+            logger.debug("已注入 stream_options.include_usage=true (provider=%r)", provider)
         return await forward_streaming_request(
             request, path, url, headers, body, backend_url, model_name, start_time,
-            request_id,  # 新增
+            request_id, provider,
         )
 
     try:
@@ -646,16 +800,41 @@ async def forward_request(
             # 解码响应体用于日志 (失败时使用 replace 策略)
             response_body_log = response_content.decode("utf-8", errors="replace")
 
-            # 从响应体中提取 token 用量（支持 OpenAI 和 Anthropic 格式）
+            # 从响应体中提取 token 用量（支持 OpenAI、Anthropic、Gemini 格式）
             input_tokens = 0
             output_tokens = 0
+            cache_read_tokens = 0
+            cache_creation_tokens = 0
             try:
                 resp_json = json.loads(response_content)
-                usage = resp_json.get("usage", {})
-                # OpenAI 格式: prompt_tokens / completion_tokens
-                # Anthropic 格式: input_tokens / output_tokens
-                input_tokens = usage.get("input_tokens") or usage.get("prompt_tokens") or 0
-                output_tokens = usage.get("output_tokens") or usage.get("completion_tokens") or 0
+                usage = resp_json.get("usage") or {}
+                usage_meta = resp_json.get("usageMetadata") or {}  # Gemini native
+                prompt_details = usage.get("prompt_tokens_details") or {}
+
+                # input / output
+                input_tokens = _safe_int(
+                    usage.get("input_tokens")       # Anthropic
+                    or usage.get("prompt_tokens")   # OpenAI
+                    or usage_meta.get("promptTokenCount")  # Gemini native
+                    or 0
+                )
+                output_tokens = _safe_int(
+                    usage.get("output_tokens")          # Anthropic
+                    or usage.get("completion_tokens")   # OpenAI
+                    or usage_meta.get("candidatesTokenCount")  # Gemini native
+                    or 0
+                )
+
+                # cache tokens（三种协议字段不同）
+                cache_read_tokens = _safe_int(
+                    usage.get("cache_read_input_tokens")              # Anthropic（独立）
+                    or prompt_details.get("cached_tokens")            # OpenAI（子集）
+                    or usage_meta.get("cachedContentTokenCount")      # Gemini（子集）
+                    or 0
+                )
+                cache_creation_tokens = _safe_int(
+                    usage.get("cache_creation_input_tokens") or 0     # Anthropic only
+                )
             except Exception:
                 pass  # 解析失败时保持 0
 
@@ -701,6 +880,8 @@ async def forward_request(
                     is_stream=False,
                     username=getattr(request.state, "token_username", None),
                     request_id=request_id,
+                    cache_read_tokens=cache_read_tokens,
+                    cache_creation_tokens=cache_creation_tokens,
                 )
             )
             request.app.state.log_tasks.add(usage_task)
@@ -715,6 +896,7 @@ async def forward_request(
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     cost_usd=_cost_usd,
+                    username=getattr(request.state, "token_username", None),
                 ))
 
             # After 阶段：扣减用户余额（fire-and-forget）
