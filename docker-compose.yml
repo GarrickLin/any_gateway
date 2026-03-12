@@ -5,6 +5,12 @@ services:
       - "1389:1389"
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
   gateway:
     container_name: any-gateway
     build: .
@@ -20,6 +26,9 @@ services:
       - ADMIN_FALLBACK_KEY=${ADMIN_FALLBACK_KEY}
       - JWT_SECRET=${JWT_SECRET}
       - SUPERADMIN_USERNAME=${SUPERADMIN_USERNAME:-superadmin}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+    depends_on:
+      - redis
     restart: unless-stopped
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:${GATEWAY_PORT:-8003}/health" ]
@@ -27,3 +36,6 @@ services:
       timeout: 10s
       start_period: 15s
       retries: 3
+
+volumes:
+  redis_data:
