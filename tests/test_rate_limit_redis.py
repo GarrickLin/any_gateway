@@ -128,3 +128,106 @@ async def test_record_value_silent_on_error():
     redis_client.eval = AsyncMock(side_effect=Exception("Redis connection error"))
     # 不应抛出异常
     await record_value(redis_client, "rate:g1:token_limit:3600", 3600, "req-xyz-456", 500.0)
+
+
+# ---------------------------------------------------------------------------
+# Task 2：滑动窗口时间语义测试（fakeredis + patch time）
+# ---------------------------------------------------------------------------
+
+import fakeredis
+import fakeredis.aioredis as fakeredis_aioredis
+from unittest.mock import patch
+
+T0 = 1_000_000.0  # 任意基准时间戳
+
+
+def _fresh_redis() -> fakeredis_aioredis.FakeRedis:
+    """每次返回绑定独立 FakeServer 的 Redis 实例，确保测试间完全隔离。"""
+    return fakeredis_aioredis.FakeRedis(server=fakeredis.FakeServer(), decode_responses=True)
+
+
+def _pt(ts: float):
+    """返回 patch services.rate_limit_redis.time.time 到固定时间戳的 context manager。"""
+    return patch("services.rate_limit_redis.time.time", return_value=ts)
+
+
+@pytest.mark.asyncio
+async def test_sliding_window_counts_within_window():
+    """T0 写入 3 条请求，T0+30s 读取 → count=3（均在窗口内）。"""
+    r = _fresh_redis()
+    key = build_key("g1", "request_limit", 60)
+
+    with _pt(T0):
+        for i in range(3):
+            await record_request(r, key, 60, f"req-{i}")
+
+    with _pt(T0 + 30):
+        count = await get_window_count(r, key, 60)
+
+    assert count == 3
+
+
+@pytest.mark.asyncio
+async def test_sliding_window_expires_after_window():
+    """T0 写入 3 条请求，T0+61s 读取 → count=0（全部过期）。"""
+    r = _fresh_redis()
+    key = build_key("g1", "request_limit", 60)
+
+    with _pt(T0):
+        for i in range(3):
+            await record_request(r, key, 60, f"req-{i}")
+
+    with _pt(T0 + 61):
+        count = await get_window_count(r, key, 60)
+
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_sliding_window_partial_expiry():
+    """T0 写 2 条，T0+30s 再写 1 条，T0+61s 读取 → count=1（早期 2 条过期，最新 1 条在窗口内）。"""
+    r = _fresh_redis()
+    key = build_key("g1", "request_limit", 60)
+
+    with _pt(T0):
+        await record_request(r, key, 60, "req-old-0")
+        await record_request(r, key, 60, "req-old-1")
+
+    with _pt(T0 + 30):
+        await record_request(r, key, 60, "req-new-0")
+
+    with _pt(T0 + 61):
+        count = await get_window_count(r, key, 60)
+
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_sliding_window_sum_within_window():
+    """T0 写入 token_limit 值 3000+4000=7000，T0+30s 读取 → sum=7000.0。"""
+    r = _fresh_redis()
+    key = build_key("g1", "token_limit", 60)
+
+    with _pt(T0):
+        await record_value(r, key, 60, "req-0", 3000.0)
+        await record_value(r, key, 60, "req-1", 4000.0)
+
+    with _pt(T0 + 30):
+        total = await get_window_sum(r, key, 60)
+
+    assert total == 7000.0
+
+
+@pytest.mark.asyncio
+async def test_sliding_window_sum_expires_after_window():
+    """T0 写入 token_limit，T0+61s 读取 → sum=0.0（全部过期）。"""
+    r = _fresh_redis()
+    key = build_key("g1", "token_limit", 60)
+
+    with _pt(T0):
+        await record_value(r, key, 60, "req-0", 5000.0)
+
+    with _pt(T0 + 61):
+        total = await get_window_sum(r, key, 60)
+
+    assert total == 0.0

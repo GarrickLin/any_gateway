@@ -352,3 +352,209 @@ def test_redis_unavailable_fail_open(client):
     assert resp.status_code != 429, (
         f"Redis fail open should not 429, got {resp.status_code}: {resp.text}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 3：token_limit 类型测试
+# ---------------------------------------------------------------------------
+
+
+def test_token_limit_not_exceeded_passes(client):
+    """token_limit 规则：窗口内 token 数未超限 → 放行（非 429）。"""
+    username = "user_token_limit_pass"
+    _run(_insert_user(username, quota_usd=50.0))
+    group_id = _run(_insert_group("group_token_limit_pass"))
+    _run(_insert_rate_limit(group_id, window_sec=60, limit_type="token_limit", value=10000))
+    key = _run(_insert_token("t_token_pass", username=username, group_id=group_id))
+
+    with patch(
+        "services.rate_limit_service.get_window_sum", new_callable=AsyncMock
+    ) as mock_sum:
+        mock_sum.return_value = 9000.0  # 9000 < 10000 → 通过
+        resp = _post_chat(client, key)
+
+    assert resp.status_code != 429, f"should not be 429, got {resp.status_code}: {resp.text}"
+
+
+def test_token_limit_exceeded_returns_429(client):
+    """token_limit 规则：窗口内 token 数超限 → 429，error 包含 token_limit。"""
+    username = "user_token_limit_fail"
+    _run(_insert_user(username, quota_usd=0))
+    group_id = _run(_insert_group("group_token_limit_fail"))
+    _run(_insert_rate_limit(group_id, window_sec=60, limit_type="token_limit", value=10000))
+    key = _run(_insert_token("t_token_fail", username=username, group_id=group_id))
+
+    with patch(
+        "services.rate_limit_service.get_window_sum", new_callable=AsyncMock
+    ) as mock_sum:
+        mock_sum.return_value = 10000.0  # 10000 >= 10000 → 超限
+        resp = _post_chat(client, key)
+
+    assert resp.status_code == 429, f"expected 429, got {resp.status_code}: {resp.text}"
+    body = resp.json().get("error", "")
+    assert "token_limit" in body.lower(), f"error should mention token_limit, got: {body}"
+
+
+def test_token_limit_exceeded_type2_has_quota_passes(client):
+    """token_limit 超限，但用户 quota_usd=50.0 → Type 2 放行，非 429。"""
+    username = "user_token_limit_type2_pass"
+    _run(_insert_user(username, quota_usd=50.0))
+    group_id = _run(_insert_group("group_token_type2_pass"))
+    _run(_insert_rate_limit(group_id, window_sec=60, limit_type="token_limit", value=10000))
+    key = _run(_insert_token("t_token_type2_pass", username=username, group_id=group_id))
+
+    with patch(
+        "services.rate_limit_service.get_window_sum", new_callable=AsyncMock
+    ) as mock_sum:
+        mock_sum.return_value = 10000.0  # Type 1 超限
+        resp = _post_chat(client, key)
+
+    assert resp.status_code != 429, f"Type 2 has quota, should not be 429, got {resp.status_code}"
+
+
+# ---------------------------------------------------------------------------
+# Task 4：quota_limit 类型测试
+# ---------------------------------------------------------------------------
+
+
+def test_quota_limit_not_exceeded_passes(client):
+    """quota_limit 规则：窗口内金额未超限 → 放行（非 429）。"""
+    username = "user_quota_limit_pass"
+    _run(_insert_user(username, quota_usd=50.0))
+    group_id = _run(_insert_group("group_quota_limit_pass"))
+    _run(_insert_rate_limit(group_id, window_sec=3600, limit_type="quota_limit", value=10.0))
+    key = _run(_insert_token("t_quota_pass", username=username, group_id=group_id))
+
+    with patch(
+        "services.rate_limit_service.get_window_sum", new_callable=AsyncMock
+    ) as mock_sum:
+        mock_sum.return_value = 9.99  # 9.99 < 10.0 → 通过
+        resp = _post_chat(client, key)
+
+    assert resp.status_code != 429, f"should not be 429, got {resp.status_code}: {resp.text}"
+
+
+def test_quota_limit_exceeded_returns_429(client):
+    """quota_limit 规则：窗口内金额超限 → 429，error 包含 quota_limit。"""
+    username = "user_quota_limit_fail"
+    _run(_insert_user(username, quota_usd=0))
+    group_id = _run(_insert_group("group_quota_limit_fail"))
+    _run(_insert_rate_limit(group_id, window_sec=3600, limit_type="quota_limit", value=10.0))
+    key = _run(_insert_token("t_quota_fail", username=username, group_id=group_id))
+
+    with patch(
+        "services.rate_limit_service.get_window_sum", new_callable=AsyncMock
+    ) as mock_sum:
+        mock_sum.return_value = 10.0  # 10.0 >= 10.0 → 超限
+        resp = _post_chat(client, key)
+
+    assert resp.status_code == 429, f"expected 429, got {resp.status_code}: {resp.text}"
+    body = resp.json().get("error", "")
+    assert "quota_limit" in body.lower(), f"error should mention quota_limit, got: {body}"
+
+
+def test_quota_limit_exceeded_type2_has_quota_passes(client):
+    """quota_limit 超限，但用户 quota_usd=50.0 → Type 2 放行，非 429。"""
+    username = "user_quota_limit_type2_pass"
+    _run(_insert_user(username, quota_usd=50.0))
+    group_id = _run(_insert_group("group_quota_type2_pass"))
+    _run(_insert_rate_limit(group_id, window_sec=3600, limit_type="quota_limit", value=10.0))
+    key = _run(_insert_token("t_quota_type2_pass", username=username, group_id=group_id))
+
+    with patch(
+        "services.rate_limit_service.get_window_sum", new_callable=AsyncMock
+    ) as mock_sum:
+        mock_sum.return_value = 10.0  # Type 1 超限
+        resp = _post_chat(client, key)
+
+    assert resp.status_code != 429, f"Type 2 has quota, should not be 429, got {resp.status_code}"
+
+
+# ---------------------------------------------------------------------------
+# Task 5：同组多规则组合测试
+# ---------------------------------------------------------------------------
+
+
+def test_multi_rule_both_pass(client):
+    """同组有 request_limit + token_limit，两条规则均未超限 → 放行。"""
+    username = "user_multi_pass"
+    _run(_insert_user(username, quota_usd=50.0))
+    group_id = _run(_insert_group("group_multi_pass"))
+    _run(_insert_rate_limit(group_id, window_sec=60, limit_type="request_limit", value=10))
+    _run(_insert_rate_limit(group_id, window_sec=60, limit_type="token_limit", value=10000))
+    key = _run(_insert_token("t_multi_pass", username=username, group_id=group_id))
+
+    with patch("services.rate_limit_service.get_window_count", new_callable=AsyncMock) as mc, \
+         patch("services.rate_limit_service.get_window_sum", new_callable=AsyncMock) as ms:
+        mc.return_value = 5       # 5 < 10
+        ms.return_value = 5000.0  # 5000 < 10000
+        resp = _post_chat(client, key)
+
+    assert resp.status_code != 429, f"both rules pass, should not be 429, got {resp.status_code}"
+
+
+def test_multi_rule_request_exceeded(client):
+    """同组两条规则，request_limit 超限 → 429（即使 token_limit 未超）。"""
+    username = "user_multi_req_fail"
+    _run(_insert_user(username, quota_usd=0))
+    group_id = _run(_insert_group("group_multi_req_fail"))
+    _run(_insert_rate_limit(group_id, window_sec=60, limit_type="request_limit", value=10))
+    _run(_insert_rate_limit(group_id, window_sec=60, limit_type="token_limit", value=10000))
+    key = _run(_insert_token("t_multi_req_fail", username=username, group_id=group_id))
+
+    with patch("services.rate_limit_service.get_window_count", new_callable=AsyncMock) as mc, \
+         patch("services.rate_limit_service.get_window_sum", new_callable=AsyncMock) as ms:
+        mc.return_value = 10      # 10 >= 10 → request 超限
+        ms.return_value = 5000.0  # token 未超（但规则顺序不定，request 超限即拒绝）
+        resp = _post_chat(client, key)
+
+    assert resp.status_code == 429, f"expected 429, got {resp.status_code}: {resp.text}"
+
+
+def test_multi_rule_disabled_rule_skipped(client):
+    """value=0 的规则应被跳过（禁用），不触发 429。"""
+    username = "user_disabled_rule"
+    _run(_insert_user(username, quota_usd=50.0))
+    group_id = _run(_insert_group("group_disabled_rule"))
+    _run(_insert_rate_limit(group_id, window_sec=60, limit_type="request_limit", value=0))  # 禁用
+    key = _run(_insert_token("t_disabled_rule", username=username, group_id=group_id))
+
+    # 不需要 mock，禁用规则直接跳过，不查 Redis
+    with patch(
+        "middleware.auth._get_redis",
+        new_callable=AsyncMock,
+        return_value=AsyncMock(),
+    ):
+        resp = _post_chat(client, key)
+
+    assert resp.status_code != 429, f"disabled rule should not 429, got {resp.status_code}"
+
+
+# ---------------------------------------------------------------------------
+# Task 6：Token 绑定边界测试
+# ---------------------------------------------------------------------------
+
+
+def test_token_with_group_no_username_type1_exceeded_returns_429(client):
+    """token 有 group 但无 username：Type 1 超限 → Type 2 无 username → 429。"""
+    group_id = _run(_insert_group("group_no_username"))
+    _run(_insert_rate_limit(group_id, window_sec=60, limit_type="request_limit", value=1))
+    key = _run(_insert_token("t_no_username", username=None, group_id=group_id))
+
+    with patch(
+        "services.rate_limit_service.get_window_count", new_callable=AsyncMock
+    ) as mock_count:
+        mock_count.return_value = 1  # Type 1 超限
+        resp = _post_chat(client, key)
+
+    assert resp.status_code == 429, f"expected 429, got {resp.status_code}: {resp.text}"
+
+
+def test_token_no_group_no_username_returns_429(client):
+    """token 无 group 无 username：直接 Type 2，无 username → 429。"""
+    key = _run(_insert_token("t_orphan", username=None, group_id=None))
+
+    resp = _post_chat(client, key)
+
+    assert resp.status_code == 429, f"expected 429, got {resp.status_code}: {resp.text}"
+    assert "quota" in resp.json().get("error", "").lower()
