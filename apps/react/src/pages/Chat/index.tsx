@@ -162,7 +162,12 @@ const Chat: React.FC = () => {
       body: JSON.stringify({ model: selectedModel, messages, stream: true }),
     })
     if (!response.ok) {
-      Message.error(`请求失败：${response.status} ${response.statusText}`)
+      let errMsg = `${response.status}`
+      try {
+        const body = await response.json()
+        errMsg = body?.error ?? errMsg
+      } catch { /* noop */ }
+      Message.error(`请求失败：${errMsg}`)
       setHistory(prev => prev.slice(0, -1))
       return
     }
@@ -215,7 +220,12 @@ const Chat: React.FC = () => {
       }),
     })
     if (!response.ok) {
-      Message.error(`请求失败：${response.status} ${response.statusText}`)
+      let errMsg = `${response.status}`
+      try {
+        const body = await response.json()
+        errMsg = body?.error ?? errMsg
+      } catch { /* noop */ }
+      Message.error(`请求失败：${errMsg}`)
       setHistory(prev => prev.slice(0, -1))
       return
     }
