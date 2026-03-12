@@ -131,7 +131,7 @@ const Dashboard: React.FC = () => {
       <Spin loading={loading} style={{ display: 'block' }}>
         {/* 概览卡片 */}
         <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={12}>
+          <Col span={6}>
             <Card>
               <Statistic
                 title="今日请求数"
@@ -140,7 +140,7 @@ const Dashboard: React.FC = () => {
               />
             </Card>
           </Col>
-          <Col span={12}>
+          <Col span={6}>
             <Card>
               <Statistic
                 title="今日费用"
@@ -150,25 +150,26 @@ const Dashboard: React.FC = () => {
               />
             </Card>
           </Col>
+          <Col span={6}>
+            <Card>
+              <Statistic
+                title="累计消费"
+                value={meData?.used_usd ?? 0}
+                precision={4}
+                suffix="USD"
+              />
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card>
+              <Statistic
+                title="账户余额"
+                value={meData ? formatQuota(meData.quota_usd) : '—'}
+                style={{ color: meData ? quotaColor(meData.quota_usd) : 'inherit' }}
+              />
+            </Card>
+          </Col>
         </Row>
-
-        {/* 账户余额卡片 */}
-        {meData && (
-          <Row gutter={16} style={{ marginBottom: 24 }}>
-            <Col span={8}>
-              <Card>
-                <Statistic
-                  title="账户余额"
-                  value={formatQuota(meData.quota_usd)}
-                  style={{ color: quotaColor(meData.quota_usd) }}
-                />
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  累计消费：${meData.used_usd.toFixed(4)}
-                </Typography.Text>
-              </Card>
-            </Col>
-          </Row>
-        )}
 
         {/* Top 10 表格 */}
         <Row gutter={16}>
