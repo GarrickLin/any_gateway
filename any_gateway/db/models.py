@@ -130,6 +130,7 @@ class UsageLog(SQLModel, table=True):
     cache_read_tokens: int = Field(default=0)
     cache_creation_tokens: int = Field(default=0)
     cost_usd: float = Field(default=0)
+    covered_by_package: bool = Field(default=False)
     duration_ms: float = Field(default=0)
     status: int | None = None
     is_stream: bool = Field(default=False)
@@ -149,15 +150,20 @@ class VoucherBase(SQLModel):
 class Voucher(VoucherBase, table=True):
     __tablename__ = "vouchers"
     id: str = Field(default_factory=lambda: uuid4().hex, primary_key=True)
-    code: str = Field(unique=True)
+    code: str = Field(default_factory=lambda: secrets.token_urlsafe(12), unique=True)
     used: bool = Field(default=False)
-    used_by: str | None = Field(default=None, foreign_key="tokens.id")
+    used_by: str | None = Field(default=None)  # username
     used_at: str | None = None
     created_at: str = Field(default_factory=utcnow)
 
 
 class VoucherCreate(VoucherBase):
     pass
+
+
+class VoucherUpdate(SQLModel):
+    amount_usd: float | None = None
+    expires_at: str | None = None
 
 
 # =======================
@@ -233,3 +239,61 @@ class RateLimitUpdate(SQLModel):
     window_sec: int | None = None
     limit_type: str | None = None
     value: float | None = None
+
+
+# =======================
+# ModelPrice（全局价格表）
+# unit: "input_token" | "output_token" | "cache_read_token" |
+#       "cache_write_token" | "extra_context_token" | "request"
+# price_per_unit: token 类为每 1M token USD；request 类为每次请求 USD
+# =======================
+
+
+class ModelPriceBase(SQLModel):
+    model_name: str
+    unit: str
+    price_per_unit: float
+
+
+class ModelPrice(ModelPriceBase, table=True):
+    __tablename__ = "model_prices"
+    id: str = Field(default_factory=lambda: uuid4().hex, primary_key=True)
+    created_at: str = Field(default_factory=utcnow)
+
+
+class ModelPriceCreate(ModelPriceBase):
+    pass
+
+
+class ModelPriceUpdate(SQLModel):
+    model_name: str | None = None
+    unit: str | None = None
+    price_per_unit: float | None = None
+
+
+# =======================
+# GroupModelPrice（Group 自定义价格，覆盖全局）
+# =======================
+
+
+class GroupModelPriceBase(SQLModel):
+    group_id: str = Field(foreign_key="user_groups.id")
+    model_name: str
+    unit: str
+    price_per_unit: float
+
+
+class GroupModelPrice(GroupModelPriceBase, table=True):
+    __tablename__ = "group_model_prices"
+    id: str = Field(default_factory=lambda: uuid4().hex, primary_key=True)
+    created_at: str = Field(default_factory=utcnow)
+
+
+class GroupModelPriceCreate(GroupModelPriceBase):
+    pass
+
+
+class GroupModelPriceUpdate(SQLModel):
+    model_name: str | None = None
+    unit: str | None = None
+    price_per_unit: float | None = None
