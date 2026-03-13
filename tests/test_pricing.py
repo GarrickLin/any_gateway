@@ -276,3 +276,56 @@ def test_maybe_deduct_deducts_when_not_covered():
 
     asyncio.run(run())
     assert called == [("alice", 5.0)]
+
+
+# ── Task 7 tests ──────────────────────────────────────────────────────────────
+
+def test_admin_create_voucher(client):
+    """管理员创建消费券，code 自动生成"""
+    resp = client.post("/admin/vouchers", json={
+        "amount_usd": 10.0,
+    }, headers=ADMIN_HEADERS)
+    assert resp.status_code in (200, 201)
+    # FastCRUD create 有时返回 null body，改为通过 list 验证
+    list_resp = client.get("/admin/vouchers", headers=ADMIN_HEADERS)
+    assert list_resp.status_code == 200
+    vouchers = list_resp.json().get("data", [])
+    assert any(v["amount_usd"] == 10.0 and len(v["code"]) > 0 for v in vouchers)
+
+
+def test_user_redeem_voucher(client):
+    """用户兑换消费券，quota_usd 增加"""
+    from services.auth_service import create_access_token
+
+    # 管理员创建券
+    client.post("/admin/vouchers", json={"amount_usd": 25.0}, headers=ADMIN_HEADERS)
+    list_resp = client.get("/admin/vouchers", headers=ADMIN_HEADERS)
+    unused = [v for v in list_resp.json().get("data", []) if not v["used"]]
+    assert unused, "需要有未使用的券"
+    code = unused[0]["code"]
+
+    # 用户兑换
+    token = create_access_token("voucher-test-user", "user")
+    headers = {"Authorization": f"Bearer {token}"}
+    resp = client.post("/user/vouchers/redeem", json={"code": code}, headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["amount_usd"] == 25.0
+
+
+def test_redeem_used_voucher_fails(client):
+    """已使用的券不能再次兑换"""
+    from services.auth_service import create_access_token
+
+    client.post("/admin/vouchers", json={"amount_usd": 5.0}, headers=ADMIN_HEADERS)
+    list_resp = client.get("/admin/vouchers", headers=ADMIN_HEADERS)
+    unused = [v for v in list_resp.json().get("data", []) if not v["used"]]
+    code = unused[-1]["code"]
+
+    token = create_access_token("voucher-user2", "user")
+    headers = {"Authorization": f"Bearer {token}"}
+    client.post("/user/vouchers/redeem", json={"code": code}, headers=headers)
+
+    resp2 = client.post("/user/vouchers/redeem", json={"code": code}, headers=headers)
+    assert resp2.status_code == 404

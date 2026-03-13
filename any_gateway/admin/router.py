@@ -44,6 +44,9 @@ from db.models import (
     UserGroup,
     UserGroupCreate,
     UserGroupUpdate,
+    Voucher,
+    VoucherCreate,
+    VoucherUpdate,
 )
 from log_writer import get_request_log_path, read_log, parse_date_str
 from services.auth_service import require_auth, require_role, verify_token
@@ -363,6 +366,53 @@ async def get_log_messages_user(
 
     # 2. 权限通过后复用共享读取函数
     return await _get_request_messages(request_id, session)
+
+
+class RedeemRequest(BaseModel):
+    code: str
+
+
+@user_router.post("/vouchers/redeem", summary="通过券码充值")
+async def redeem_voucher(
+    body: RedeemRequest,
+    session: AsyncSession = Depends(async_session_generator),
+    current_user: dict = Depends(require_auth),
+) -> dict:
+    """用户输入消费券码充值，成功则将 amount_usd 加入 User.quota_usd。"""
+    from datetime import datetime, timezone
+    from db.models import Voucher, User
+
+    result = await session.execute(
+        select(Voucher).where(Voucher.code == body.code, Voucher.used == False)  # noqa: E712
+    )
+    voucher = result.scalar_one_or_none()
+    if voucher is None:
+        raise HTTPException(status_code=404, detail="券码不存在或已被使用")
+
+    if voucher.expires_at:
+        now = datetime.now(timezone.utc).isoformat()
+        if now > voucher.expires_at:
+            raise HTTPException(status_code=400, detail="券码已过期")
+
+    username = current_user["username"]
+    now_str = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    voucher.used = True
+    voucher.used_at = now_str
+    voucher.used_by = username
+    session.add(voucher)
+
+    user_result = await session.execute(select(User).where(User.username == username))
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        user = User(username=username, quota_usd=voucher.amount_usd)
+        session.add(user)
+    else:
+        user.quota_usd = (user.quota_usd or 0) + voucher.amount_usd
+        session.add(user)
+
+    await session.commit()
+    logger.info(f"用户 {username} 兑换消费券，充值 ${voucher.amount_usd}")
+    return {"ok": True, "amount_usd": voucher.amount_usd, "new_quota_usd": user.quota_usd}
 
 
 @user_router.get("/groups", summary="列出所有可用分组（供 Token 绑定选择）")
@@ -1110,3 +1160,41 @@ group_model_price_router: APIRouter = crud_router(
     delete_deps=_common_deps,
     db_delete_deps=_common_deps,
 )
+
+voucher_router: APIRouter = crud_router(
+    session=async_session_generator,
+    model=Voucher,
+    create_schema=VoucherCreate,
+    update_schema=VoucherUpdate,
+    path="/admin/vouchers",
+    tags=["Admin: Vouchers"],
+    create_deps=_common_deps,
+    read_deps=_common_deps,
+    deleted_methods=["read_multi"],  # 手动实现，按 created_at 倒序
+    update_deps=_common_deps,
+    delete_deps=_common_deps,
+    db_delete_deps=_common_deps,
+)
+
+
+@voucher_router.get("/admin/vouchers", tags=["Admin: Vouchers"], summary="列出消费券（按创建时间倒序）")
+async def list_vouchers(
+    session: AsyncSession = Depends(async_session_generator),
+    _: None = Depends(require_admin_access),
+    page: int = 1,
+    items_per_page: int = 100,
+) -> dict:
+    """列出所有消费券，按创建时间降序排列（最新的在前）。"""
+    offset = (page - 1) * items_per_page
+    stmt = select(Voucher).order_by(Voucher.created_at.desc()).offset(offset).limit(items_per_page)
+    result = await session.execute(stmt)
+    vouchers = list(result.scalars().all())
+    count_result = await session.execute(select(func.count()).select_from(Voucher))
+    total = count_result.scalar() or 0
+    return {
+        "data": [v.model_dump() for v in vouchers],
+        "total": total,
+        "has_more": offset + len(vouchers) < total,
+        "page": page,
+        "items_per_page": items_per_page,
+    }
