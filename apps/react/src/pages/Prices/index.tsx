@@ -146,7 +146,7 @@ const Prices: React.FC = () => {
         </Space>
       </div>
 
-      <Table columns={columns} data={filtered} loading={loading} rowKey="id" />
+      <Table columns={columns} data={filtered} loading={loading} rowKey="id" pagination={{ pageSize: 20, showTotal: true }} />
 
       <Modal
         title={editing ? '编辑价格' : '新增价格'}
