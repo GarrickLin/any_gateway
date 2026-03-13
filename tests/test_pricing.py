@@ -192,3 +192,47 @@ def test_calculate_cost_request_unit():
 
     result = asyncio.run(run())
     assert abs(result - 0.006) < 1e-9
+
+
+# ── Task 3 tests ──────────────────────────────────────────────────────────────
+
+ADMIN_HEADERS = {"x-admin-key": "test-admin-secret"}
+
+
+def test_admin_create_model_price(client):
+    resp = client.post("/admin/model-prices", json={
+        "model_name": "gpt-4",
+        "unit": "input_token",
+        "price_per_unit": 10.0,
+    }, headers=ADMIN_HEADERS)
+    assert resp.status_code in (200, 201)
+    # FastCRUD v0.21 create 返回空 body，通过 list 验证数据已写入
+    list_resp = client.get("/admin/model-prices", headers=ADMIN_HEADERS)
+    assert list_resp.status_code == 200
+    items = list_resp.json()["data"]
+    assert any(i["model_name"] == "gpt-4" and i["unit"] == "input_token" for i in items)
+
+
+def test_admin_list_model_prices(client):
+    resp = client.get("/admin/model-prices", headers=ADMIN_HEADERS)
+    assert resp.status_code == 200
+    assert "data" in resp.json()
+
+
+def test_admin_create_group_model_price(client):
+    client.post("/admin/groups", json={"name": "vip-g3"}, headers=ADMIN_HEADERS)
+    groups = client.get("/admin/groups", headers=ADMIN_HEADERS).json()
+    group_id = next(g["id"] for g in groups["data"] if g["name"] == "vip-g3")
+
+    resp = client.post("/admin/group-model-prices", json={
+        "group_id": group_id,
+        "model_name": "gpt-4",
+        "unit": "input_token",
+        "price_per_unit": 5.0,
+    }, headers=ADMIN_HEADERS)
+    assert resp.status_code in (200, 201)
+    # 验证数据写入：通过 list 查询
+    list_resp = client.get("/admin/group-model-prices", headers=ADMIN_HEADERS)
+    assert list_resp.status_code == 200
+    items = list_resp.json()["data"]
+    assert any(i["group_id"] == group_id for i in items)
