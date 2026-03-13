@@ -52,6 +52,15 @@ button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
 }
 
+/* Chat Markdown rendering */
+.md-p {
+  margin: 0 0 6px;
+  line-height: 1.6;
+}
+.md-p:last-child {
+  margin-bottom: 0;
+}
+
 @media (prefers-color-scheme: light) {
   :root {
     color: #213547;

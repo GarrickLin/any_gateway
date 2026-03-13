@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react'
 import {
   Select, Button, Input, Typography, Space, Message
 } from '@arco-design/web-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { getTokens } from '../../api/tokens'
 import { useAuthStore } from '../../store/auth'
 
@@ -346,11 +348,72 @@ const Chat: React.FC = () => {
                   borderRadius: 8,
                   background: msg.role === 'user' ? '#165dff' : '#f2f3f5',
                   color: msg.role === 'user' ? '#fff' : '#1d2129',
-                  whiteSpace: 'pre-wrap',
+                  whiteSpace: msg.role === 'user' ? 'pre-wrap' : undefined,
                   wordBreak: 'break-word',
                 }}
               >
-                {msg.content || (msg.role === 'assistant' && sending ? '▌' : '')}
+                {msg.role === 'user' ? (
+                  msg.content
+                ) : (
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      p: ({ children }) => (
+                        <p className="md-p">{children}</p>
+                      ),
+                      pre: ({ children }) => (
+                        <pre style={{
+                          background: '#282c34',
+                          color: '#abb2bf',
+                          borderRadius: 6,
+                          padding: '10px 14px',
+                          overflowX: 'auto',
+                          fontSize: 13,
+                          margin: '6px 0',
+                        }}>{children}</pre>
+                      ),
+                      code: ({ children, className, node: _node, ...props }) => {
+                        const isBlock = /language-/.test(className || '')
+                        return isBlock ? (
+                          <code style={{ fontFamily: 'monospace' }} className={className} {...props}>{children}</code>
+                        ) : (
+                          <code style={{
+                            background: '#e8e8e8',
+                            borderRadius: 3,
+                            padding: '1px 5px',
+                            fontSize: 13,
+                            fontFamily: 'monospace',
+                          }} className={className} {...props}>{children}</code>
+                        )
+                      },
+                      a: ({ children, ...props }) => (
+                        <a style={{ color: '#165dff' }} target="_blank" rel="noreferrer" {...props}>{children}</a>
+                      ),
+                      ul: ({ children }) => (
+                        <ul style={{ paddingLeft: 20, margin: '4px 0' }}>{children}</ul>
+                      ),
+                      ol: ({ children }) => (
+                        <ol style={{ paddingLeft: 20, margin: '4px 0' }}>{children}</ol>
+                      ),
+                      li: ({ children }) => (
+                        <li style={{ marginBottom: 2 }}>{children}</li>
+                      ),
+                      blockquote: ({ children }) => (
+                        <blockquote style={{
+                          borderLeft: '3px solid #c9cdd4',
+                          margin: '6px 0',
+                          paddingLeft: 12,
+                          color: '#6b7280',
+                        }}>{children}</blockquote>
+                      ),
+                      h1: ({ children }) => <h3 style={{ fontSize: '1.1em', fontWeight: 600, margin: '8px 0 4px' }}>{children}</h3>,
+                      h2: ({ children }) => <h4 style={{ fontSize: '1em', fontWeight: 600, margin: '6px 0 4px' }}>{children}</h4>,
+                      h3: ({ children }) => <strong style={{ display: 'block', margin: '4px 0' }}>{children}</strong>,
+                    }}
+                  >
+                    {msg.content || (sending ? '▌' : '')}
+                  </ReactMarkdown>
+                )}
               </div>
             </div>
           ))}
