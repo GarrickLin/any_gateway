@@ -236,3 +236,43 @@ def test_admin_create_group_model_price(client):
     assert list_resp.status_code == 200
     items = list_resp.json()["data"]
     assert any(i["group_id"] == group_id for i in items)
+
+
+# ── Task 6 tests ──────────────────────────────────────────────────────────────
+
+def test_maybe_deduct_skips_when_covered():
+    """covered_by_package=True 时不调用 update_user_balance"""
+    import asyncio
+    from unittest.mock import patch, AsyncMock
+
+    called = []
+
+    async def fake_balance(username, cost_usd):
+        called.append((username, cost_usd))
+
+    async def run():
+        with patch("services.quota.update_user_balance", fake_balance):
+            from gateway import _maybe_deduct
+            await _maybe_deduct(covered=True, username="alice", cost_usd=5.0)
+
+    asyncio.run(run())
+    assert called == []
+
+
+def test_maybe_deduct_deducts_when_not_covered():
+    """covered_by_package=False 时正常扣费"""
+    import asyncio
+    from unittest.mock import patch
+
+    called = []
+
+    async def fake_balance(username, cost_usd):
+        called.append((username, cost_usd))
+
+    async def run():
+        with patch("services.quota.update_user_balance", fake_balance):
+            from gateway import _maybe_deduct
+            await _maybe_deduct(covered=False, username="alice", cost_usd=5.0)
+
+    asyncio.run(run())
+    assert called == [("alice", 5.0)]

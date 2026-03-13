@@ -42,6 +42,7 @@ async def update_usage(
     request_id: str | None = None,  # 新增：外部传入时作为 UsageLog.id
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
+    covered_by_package: bool = False,
 ) -> None:
     """
     1. 递增 Token.used_usd（通过 SQL 级原子 UPDATE）
@@ -76,6 +77,7 @@ async def update_usage(
                 status=status,
                 is_stream=is_stream,
                 username=username,
+                covered_by_package=covered_by_package,
             )
             session.add(log)
             await session.commit()

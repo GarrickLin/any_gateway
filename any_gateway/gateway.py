@@ -351,6 +351,14 @@ async def _get_group_multiplier(group_id: str | None) -> float:
         return 1.0
 
 
+async def _maybe_deduct(covered: bool, username: str | None, cost_usd: float) -> None:
+    """根据 covered_by_package 决定是否扣减用户余额。covered=True 时跳过扣费。"""
+    if covered:
+        return
+    import services.quota as _quota_mod
+    await _quota_mod.update_user_balance(username, cost_usd)
+
+
 async def _update_rate_limit_counters(
     group_id: str,
     request_id: str,
@@ -686,6 +694,7 @@ async def forward_streaming_request(
                     request_id=request_id,
                     cache_read_tokens=_stream_cache_read_tokens,
                     cache_creation_tokens=_stream_cache_creation_tokens,
+                    covered_by_package=getattr(request.state, "covered_by_package", False),
                 )
             )
             app.state.log_tasks.add(usage_task)
@@ -703,7 +712,8 @@ async def forward_streaming_request(
                 ))
 
             # After 阶段：扣减用户余额（fire-and-forget）
-            asyncio.create_task(update_user_balance(
+            asyncio.create_task(_maybe_deduct(
+                covered=getattr(request.state, "covered_by_package", False),
                 username=getattr(request.state, "token_username", None),
                 cost_usd=_stream_cost_usd,
             ))
@@ -925,6 +935,7 @@ async def forward_request(
                     request_id=request_id,
                     cache_read_tokens=cache_read_tokens,
                     cache_creation_tokens=cache_creation_tokens,
+                    covered_by_package=getattr(request.state, "covered_by_package", False),
                 )
             )
             request.app.state.log_tasks.add(usage_task)
@@ -942,7 +953,8 @@ async def forward_request(
                 ))
 
             # After 阶段：扣减用户余额（fire-and-forget）
-            asyncio.create_task(update_user_balance(
+            asyncio.create_task(_maybe_deduct(
+                covered=getattr(request.state, "covered_by_package", False),
                 username=getattr(request.state, "token_username", None),
                 cost_usd=_cost_usd,
             ))
