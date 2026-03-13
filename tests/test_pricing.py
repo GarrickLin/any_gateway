@@ -96,3 +96,99 @@ def test_voucher_code_auto_generated():
     from db.models import Voucher
     v = Voucher(amount_usd=10.0)
     assert v.code is not None and len(v.code) > 0
+
+
+# ── Task 2 tests ──────────────────────────────────────────────────────────────
+
+def test_match_exact():
+    from services.pricing import match_model_name
+    assert match_model_name("gpt-4", "gpt-4") is True
+
+
+def test_match_fuzzy_spaces():
+    from services.pricing import match_model_name
+    assert match_model_name("chatgpt-turbo-3.5", "gpt 3.5 turbo") is True
+
+
+def test_match_no_match():
+    from services.pricing import match_model_name
+    assert match_model_name("claude-3-opus", "gpt 3.5 turbo") is False
+
+
+def test_calculate_cost_zero_no_price():
+    """没有价格表时 cost = 0"""
+    from services.pricing import calculate_cost
+
+    async def run():
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+        async with engine.begin() as conn:
+            import db.models  # noqa
+            await conn.run_sync(SQLModel.metadata.create_all)
+        async with AsyncSession(engine) as session:
+            return await calculate_cost(session, None, "gpt-4", 1000, 500)
+
+    assert asyncio.run(run()) == 0.0
+
+
+def test_calculate_cost_global_price():
+    """全局价格表计算：1M input @ $10 + 1M output @ $30 = $40"""
+    from services.pricing import calculate_cost
+    from db.models import ModelPrice
+
+    async def run():
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+        async with engine.begin() as conn:
+            import db.models  # noqa
+            await conn.run_sync(SQLModel.metadata.create_all)
+        async with AsyncSession(engine) as session:
+            session.add(ModelPrice(model_name="gpt-4", unit="input_token", price_per_unit=10.0))
+            session.add(ModelPrice(model_name="gpt-4", unit="output_token", price_per_unit=30.0))
+            await session.commit()
+            return await calculate_cost(session, None, "gpt-4", 1_000_000, 1_000_000)
+
+    result = asyncio.run(run())
+    assert abs(result - 40.0) < 1e-9
+
+
+def test_calculate_cost_group_price_overrides_global():
+    """Group 价格优先于全局价格"""
+    from services.pricing import calculate_cost
+    from db.models import ModelPrice, GroupModelPrice, UserGroup
+
+    async def run():
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+        async with engine.begin() as conn:
+            import db.models  # noqa
+            await conn.run_sync(SQLModel.metadata.create_all)
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            group = UserGroup(name="vip")
+            session.add(group)
+            await session.commit()
+            await session.refresh(group)
+            group_id = group.id
+            session.add(ModelPrice(model_name="gpt-4", unit="input_token", price_per_unit=10.0))
+            session.add(GroupModelPrice(group_id=group_id, model_name="gpt-4", unit="input_token", price_per_unit=5.0))
+            await session.commit()
+            return await calculate_cost(session, group_id, "gpt-4", 1_000_000, 0)
+
+    result = asyncio.run(run())
+    assert abs(result - 5.0) < 1e-9
+
+
+def test_calculate_cost_request_unit():
+    """request 单位：固定每次费用"""
+    from services.pricing import calculate_cost
+    from db.models import ModelPrice
+
+    async def run():
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+        async with engine.begin() as conn:
+            import db.models  # noqa
+            await conn.run_sync(SQLModel.metadata.create_all)
+        async with AsyncSession(engine) as session:
+            session.add(ModelPrice(model_name="nano", unit="request", price_per_unit=0.006))
+            await session.commit()
+            return await calculate_cost(session, None, "nano", 1000, 500)
+
+    result = asyncio.run(run())
+    assert abs(result - 0.006) < 1e-9
