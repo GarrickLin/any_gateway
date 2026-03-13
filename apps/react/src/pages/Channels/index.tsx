@@ -99,6 +99,7 @@ const Channels: React.FC = () => {
   const [fetchingModels, setFetchingModels] = useState<string | null>(null)
   const [mappings, setMappings] = useState<Mapping[]>([])
   const [viewModelsChannel, setViewModelsChannel] = useState<Channel | null>(null)
+  const [deletingModel, setDeletingModel] = useState<string | null>(null)
 
   const [form] = Form.useForm()
 
@@ -228,6 +229,50 @@ const Channels: React.FC = () => {
       Message.error('获取模型失败')
     } finally {
       setFetchingModels(null)
+    }
+  }
+
+  const handleRemoveModel = async (modelId: string) => {
+    if (!viewModelsChannel) return
+    setDeletingModel(modelId)
+    try {
+      // 从 models 数组中移除
+      let newModels = viewModelsChannel.models
+      try {
+        const list: unknown[] = JSON.parse(viewModelsChannel.models || '[]')
+        const filtered = list.filter((m) => {
+          const id = m && typeof m === 'object' && 'id' in m
+            ? String((m as { id: unknown }).id)
+            : String(m)
+          return id !== modelId
+        })
+        newModels = JSON.stringify(filtered)
+      } catch {
+        // noop
+      }
+
+      // 从 model_mapping 中移除
+      let newMapping = viewModelsChannel.model_mapping
+      try {
+        const obj = JSON.parse(viewModelsChannel.model_mapping || '{}')
+        if (modelId in obj) {
+          delete obj[modelId]
+          newMapping = JSON.stringify(obj)
+        }
+      } catch {
+        // noop
+      }
+
+      await updateChannel(viewModelsChannel.id, { models: newModels, model_mapping: newMapping })
+      // 同步更新 viewModelsChannel 避免关闭再刷新
+      setViewModelsChannel((prev) =>
+        prev ? { ...prev, models: newModels, model_mapping: newMapping } : null,
+      )
+      fetchData()
+    } catch {
+      Message.error('删除模型失败')
+    } finally {
+      setDeletingModel(null)
     }
   }
 
@@ -387,7 +432,13 @@ const Channels: React.FC = () => {
           }}
         >
           {parseModelIds(viewModelsChannel?.models ?? null, viewModelsChannel?.model_mapping ?? null).map((id) => (
-            <Tag key={id} color="arcoblue" style={{ marginBottom: 0 }}>
+            <Tag
+              key={id}
+              color="arcoblue"
+              closable
+              onClose={() => handleRemoveModel(id)}
+              style={{ marginBottom: 0, opacity: deletingModel === id ? 0.5 : 1 }}
+            >
               {id}
             </Tag>
           ))}
