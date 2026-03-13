@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react'
 import {
   Table, Button, Modal, Form, Input, InputNumber,
-  Popconfirm, Message, Space, Typography, Select, Tag
+  Popconfirm, Message, Space, Typography, Select, Tag, Radio
 } from '@arco-design/web-react'
 import { getGroups, createGroup, updateGroup, deleteGroup } from '../../api/groups'
 import { getChannels } from '../../api/channels'
 import { getRateLimits, createRateLimit, deleteRateLimit } from '../../api/rateLimits'
 import client from '../../api/client'
+import { getGroupPrices, createGroupPrice, deleteGroupPrice } from '../../api/groupPrices'
 
 const Groups: React.FC = () => {
   const [data, setData] = useState<any[]>([])
@@ -34,6 +35,17 @@ const Groups: React.FC = () => {
   const [addingChannelId, setAddingChannelId] = useState<string>('')
   const [channelLoading, setChannelLoading] = useState(false)
   const [addLoading, setAddLoading] = useState(false)
+
+  // 管理价格相关状态
+  const [priceModalOpen, setPriceModalOpen] = useState(false)
+  const [managingPriceGroup, setManagingPriceGroup] = useState<any>(null)
+  const [groupPrices, setGroupPrices] = useState<any[]>([])
+  const [priceLoading, setPriceLoading] = useState(false)
+  const [newPriceMode, setNewPriceMode] = useState<'token' | 'request'>('token')
+  const [newPriceModelName, setNewPriceModelName] = useState('')
+  const [newPriceUnit, setNewPriceUnit] = useState('input_token')
+  const [newPriceValue, setNewPriceValue] = useState<number>(0)
+  const [addPriceLoading, setAddPriceLoading] = useState(false)
 
   const fetchData = async () => {
     setLoading(true)
@@ -202,6 +214,64 @@ const Groups: React.FC = () => {
     }
   }
 
+  // 加载 Group 价格
+  const fetchGroupPrices = async (groupId: string) => {
+    setPriceLoading(true)
+    try {
+      const res = await getGroupPrices(groupId)
+      const raw = res.data?.data ?? res.data
+      setGroupPrices(Array.isArray(raw) ? raw : [])
+    } catch { Message.error('加载价格失败') }
+    finally { setPriceLoading(false) }
+  }
+
+  // 打开"管理价格" Modal
+  const handleOpenPrices = (record: any) => {
+    setManagingPriceGroup(record)
+    setPriceModalOpen(true)
+    setNewPriceMode('token')
+    setNewPriceModelName('')
+    setNewPriceUnit('input_token')
+    setNewPriceValue(0)
+    fetchGroupPrices(record.id)
+  }
+
+  // 添加价格
+  const handleAddGroupPrice = async () => {
+    if (!newPriceModelName.trim()) {
+      Message.warning('请输入模型名称')
+      return
+    }
+    if (newPriceValue <= 0) {
+      Message.warning('单价必须大于 0')
+      return
+    }
+    setAddPriceLoading(true)
+    try {
+      const unit = newPriceMode === 'request' ? 'request' : newPriceUnit
+      await createGroupPrice({
+        group_id: managingPriceGroup.id,
+        model_name: newPriceModelName.trim(),
+        unit,
+        price_per_unit: newPriceValue,
+      })
+      Message.success('价格已添加')
+      fetchGroupPrices(managingPriceGroup.id)
+      setNewPriceModelName('')
+      setNewPriceValue(0)
+    } catch { Message.error('添加失败') }
+    finally { setAddPriceLoading(false) }
+  }
+
+  // 删除价格
+  const handleDeleteGroupPrice = async (priceId: string) => {
+    try {
+      await deleteGroupPrice(priceId)
+      Message.success('已删除')
+      fetchGroupPrices(managingPriceGroup.id)
+    } catch { Message.error('删除失败') }
+  }
+
   // 已在分组中的渠道 id 集合，用于过滤下拉选项
   const groupChannelIds = new Set(groupChannels.map((c) => c.id))
 
@@ -241,6 +311,7 @@ const Groups: React.FC = () => {
           <Button size="mini" type="text" onClick={() => handleOpen(row)}>编辑</Button>
           <Button size="mini" type="text" onClick={() => openChannelModal(row)}>管理渠道</Button>
           <Button size="mini" type="text" onClick={() => handleOpenRules(row)}>管理规则</Button>
+          <Button size="mini" type="text" onClick={() => handleOpenPrices(row)}>管理价格</Button>
           <Popconfirm title="确认删除此 Group？" onOk={() => handleDelete(row.id)}>
             <Button size="mini" type="text" status="danger">删除</Button>
           </Popconfirm>
@@ -363,6 +434,97 @@ const Groups: React.FC = () => {
             <InputNumber min={0} value={newValue} onChange={(v) => setNewValue(v ?? 0)} style={{ width: 100 }} placeholder="限制值" />
             <Button type="primary" loading={addRuleLoading} onClick={handleAddRule}>添加</Button>
           </Space>
+        </div>
+      </Modal>
+
+      {/* 管理价格 Modal */}
+      <Modal
+        title={`管理价格 — ${managingPriceGroup?.name ?? ''}`}
+        visible={priceModalOpen}
+        onCancel={() => setPriceModalOpen(false)}
+        footer={<Button onClick={() => setPriceModalOpen(false)}>关闭</Button>}
+        style={{ width: 620 }}
+        unmountOnExit
+      >
+        <Table
+          loading={priceLoading}
+          data={groupPrices}
+          rowKey="id"
+          pagination={false}
+          columns={[
+            { title: '模型名称', dataIndex: 'model_name' },
+            {
+              title: '计价单位',
+              dataIndex: 'unit',
+              render: (v: string) => ({
+                input_token: 'Input / 1M',
+                output_token: 'Output / 1M',
+                cache_read_token: 'Cache Read / 1M',
+                cache_write_token: 'Cache Write / 1M',
+                extra_context_token: 'Extra / 1M',
+                request: '每次请求',
+              }[v] ?? v),
+            },
+            {
+              title: '单价 (USD)',
+              dataIndex: 'price_per_unit',
+              render: (v: number) => v.toFixed(6),
+            },
+            {
+              title: '操作',
+              render: (_: any, record: any) => (
+                <Popconfirm title="确认删除？" onOk={() => handleDeleteGroupPrice(record.id)}>
+                  <Button type="text" status="danger" size="small">删除</Button>
+                </Popconfirm>
+              ),
+            },
+          ]}
+        />
+
+        <div style={{ marginTop: 16 }}>
+          <Typography.Text bold>添加覆盖价格</Typography.Text>
+          <div style={{ marginTop: 8 }}>
+            <Radio.Group
+              value={newPriceMode}
+              onChange={(v: 'token' | 'request') => { setNewPriceMode(v); setNewPriceUnit('input_token') }}
+              style={{ marginBottom: 8 }}
+            >
+              <Radio value="token">按 Token</Radio>
+              <Radio value="request">按请求次数</Radio>
+            </Radio.Group>
+            <Space wrap>
+              <Input
+                placeholder="模型名称"
+                value={newPriceModelName}
+                onChange={setNewPriceModelName}
+                style={{ width: 150 }}
+              />
+              {newPriceMode === 'token' && (
+                <Select
+                  value={newPriceUnit}
+                  onChange={setNewPriceUnit}
+                  style={{ width: 180 }}
+                  options={[
+                    { label: 'Input / 1M', value: 'input_token' },
+                    { label: 'Output / 1M', value: 'output_token' },
+                    { label: 'Cache Read / 1M', value: 'cache_read_token' },
+                    { label: 'Cache Write / 1M', value: 'cache_write_token' },
+                    { label: 'Extra Context / 1M', value: 'extra_context_token' },
+                  ]}
+                />
+              )}
+              <InputNumber
+                min={0}
+                step={0.001}
+                precision={6}
+                value={newPriceValue}
+                onChange={(v) => setNewPriceValue(v ?? 0)}
+                placeholder="单价 USD"
+                style={{ width: 120 }}
+              />
+              <Button type="primary" loading={addPriceLoading} onClick={handleAddGroupPrice}>添加</Button>
+            </Space>
+          </div>
         </div>
       </Modal>
     </div>

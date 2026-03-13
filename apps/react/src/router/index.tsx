@@ -9,6 +9,8 @@ import ApiKeys from '../pages/ApiKeys'
 import Users from '../pages/Users'
 import Logs from '../pages/Logs'
 import Chat from '../pages/Chat'
+import Prices from '../pages/Prices'
+import Vouchers from '../pages/Vouchers'
 
 const router = createBrowserRouter([
   {
@@ -40,6 +42,22 @@ const router = createBrowserRouter([
         element: (
           <AuthGuard roles={['admin', 'superadmin']}>
             <Channels />
+          </AuthGuard>
+        ),
+      },
+      {
+        path: 'prices',
+        element: (
+          <AuthGuard roles={['admin', 'superadmin']}>
+            <Prices />
+          </AuthGuard>
+        ),
+      },
+      {
+        path: 'vouchers',
+        element: (
+          <AuthGuard roles={['admin', 'superadmin']}>
+            <Vouchers />
           </AuthGuard>
         ),
       },

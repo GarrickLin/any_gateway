@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
   Grid, Card, Statistic, Table, Progress,
-  Typography, Spin, Message,
+  Typography, Spin, Message, Input,
 } from '@arco-design/web-react'
 import { IconRefresh } from '@arco-design/web-react/icon'
 import { Button } from '@arco-design/web-react'
@@ -11,6 +11,7 @@ import {
 } from '../../api/logs'
 import { getMe } from '../../api/auth'
 import { useAuthStore } from '../../store/auth'
+import { redeemVoucher } from '../../api/vouchers'
 
 const { Row, Col } = Grid
 
@@ -42,6 +43,9 @@ const Dashboard: React.FC = () => {
   const [models, setModels] = useState<ModelStat[]>([])
   const [loading, setLoading] = useState(false)
   const [meData, setMeData] = useState<{ quota_usd: number | null; used_usd: number } | null>(null)
+  const [voucherCode, setVoucherCode] = useState('')
+  const [redeeming, setRedeeming] = useState(false)
+  const [voucherError, setVoucherError] = useState('')
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
@@ -61,6 +65,28 @@ const Dashboard: React.FC = () => {
       setLoading(false)
     }
   }, [isAdmin])
+
+  const handleRedeem = async () => {
+    if (!voucherCode.trim()) {
+      setVoucherError('请输入券码')
+      return
+    }
+    setVoucherError('')
+    setRedeeming(true)
+    try {
+      const res = await redeemVoucher(voucherCode.trim())
+      const amount = res.data?.amount_usd ?? 0
+      Message.success(`充值 $${amount.toFixed(2)} 成功`)
+      setVoucherCode('')
+      const me = await getMe()
+      setMeData({ quota_usd: me.data.quota_usd, used_usd: me.data.used_usd })
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      setVoucherError(typeof detail === 'string' ? detail : '兑换失败')
+    } finally {
+      setRedeeming(false)
+    }
+  }
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
@@ -130,9 +156,9 @@ const Dashboard: React.FC = () => {
 
       <Spin loading={loading} style={{ display: 'block' }}>
         {/* 概览卡片 */}
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={6}>
-            <Card>
+        <Row gutter={16} align="stretch" style={{ marginBottom: 24, flexWrap: 'nowrap' }}>
+          <Col flex={1}>
+            <Card style={{ height: '100%' }}>
               <Statistic
                 title="今日请求数"
                 value={overview?.request_count ?? 0}
@@ -140,18 +166,28 @@ const Dashboard: React.FC = () => {
               />
             </Card>
           </Col>
-          <Col span={6}>
-            <Card>
+          <Col flex={1}>
+            <Card style={{ height: '100%' }}>
               <Statistic
-                title="今日费用"
+                title="今日费用（含套餐）"
                 value={overview?.total_cost_usd ?? 0}
                 precision={4}
                 suffix="USD"
               />
             </Card>
           </Col>
-          <Col span={6}>
-            <Card>
+          <Col flex={1}>
+            <Card style={{ height: '100%' }}>
+              <Statistic
+                title="实际扣费"
+                value={(overview as any)?.actual_cost_usd ?? 0}
+                precision={4}
+                suffix="USD"
+              />
+            </Card>
+          </Col>
+          <Col flex={1}>
+            <Card style={{ height: '100%' }}>
               <Statistic
                 title="累计消费"
                 value={meData?.used_usd ?? 0}
@@ -160,13 +196,31 @@ const Dashboard: React.FC = () => {
               />
             </Card>
           </Col>
-          <Col span={6}>
-            <Card>
+          <Col flex={1}>
+            <Card style={{ height: '100%' }}>
               <Statistic
                 title="账户余额"
                 value={meData ? formatQuota(meData.quota_usd) : '—'}
                 style={{ color: meData ? quotaColor(meData.quota_usd) : 'inherit' }}
               />
+              <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
+                <Input
+                  size="small"
+                  placeholder="输入券码充值"
+                  value={voucherCode}
+                  onChange={(v) => { setVoucherCode(v); setVoucherError('') }}
+                  style={{ flex: 1 }}
+                  onPressEnter={handleRedeem}
+                />
+                <Button size="small" type="primary" loading={redeeming} onClick={handleRedeem}>
+                  兑换
+                </Button>
+              </div>
+              {voucherError && (
+                <div style={{ marginTop: 4, fontSize: 12, color: 'rgb(var(--red-6))' }}>
+                  {voucherError}
+                </div>
+              )}
             </Card>
           </Col>
         </Row>

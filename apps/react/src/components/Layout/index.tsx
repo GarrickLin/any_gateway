@@ -15,6 +15,8 @@ import {
   IconSettings,
   IconDashboard,
   IconUser,
+  IconTag,
+  IconStorage,
 } from '@arco-design/web-react/icon'
 import { useAuthStore } from '../../store/auth'
 
@@ -73,6 +75,12 @@ const Layout: React.FC = () => {
               </MenuItem>
               <MenuItem key="channels">
                 <IconSettings /> 渠道
+              </MenuItem>
+              <MenuItem key="prices">
+                <IconStorage /> 价格管理
+              </MenuItem>
+              <MenuItem key="vouchers">
+                <IconTag /> 消费券
               </MenuItem>
             </>
           )}

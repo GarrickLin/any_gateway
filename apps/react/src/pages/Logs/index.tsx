@@ -335,6 +335,16 @@ const Logs: React.FC = () => {
     },
     { title: '耗时(ms)', dataIndex: 'duration_ms', render: (v: number) => v?.toFixed(0) },
     {
+      title: '费用(USD)',
+      dataIndex: 'cost_usd',
+      render: (v: number) => v > 0 ? `$${v.toFixed(6)}` : '-',
+    },
+    {
+      title: '套餐覆盖',
+      dataIndex: 'covered_by_package',
+      render: (v: boolean) => v ? <Tag color="purple">套餐</Tag> : <Tag color="gray">计费</Tag>,
+    },
+    {
       title: '状态码',
       dataIndex: 'status',
       render: (v: number) => <Tag color={statusColor(v)}>{v || '-'}</Tag>
