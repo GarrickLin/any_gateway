@@ -216,7 +216,7 @@ async def get_me(
 ) -> dict:
     from db.models import User
     crud = FastCRUD(User)
-    db_user = await crud.get(session, username=user.get("sub"))
+    db_user = await crud.get(session, username=user.get("username"))
     return {
         **user,
         "quota_usd": db_user.get("quota_usd") if db_user else 0,
@@ -231,6 +231,7 @@ async def get_me(
 
 class OverviewResponse(BaseModel):
     total_cost_usd: float
+    actual_cost_usd: float
     request_count: int
     date: str
 
@@ -457,17 +458,23 @@ async def user_stats_overview(
 ) -> OverviewResponse:
     """返回当前用户今日总费用（USD）和请求数。"""
     today = _today_prefix()
-    stmt = select(
-        func.coalesce(func.sum(UsageLog.cost_usd), 0).label("total_cost_usd"),
-        func.count(UsageLog.id).label("request_count"),
-    ).where(
+    base_filter = [
         UsageLog.created_at.like(f"{today}%"),
         UsageLog.username == current_user["username"],
-    )
+    ]
+    stmt = select(
+        func.coalesce(func.sum(UsageLog.cost_usd), 0).label("total_cost_usd"),
+        func.coalesce(
+            func.sum(UsageLog.cost_usd).filter(UsageLog.covered_by_package == False),  # noqa: E712
+            0,
+        ).label("actual_cost_usd"),
+        func.count(UsageLog.id).label("request_count"),
+    ).where(*base_filter)
     result = await session.execute(stmt)
     row = result.one()
     return OverviewResponse(
         total_cost_usd=float(row.total_cost_usd),
+        actual_cost_usd=float(row.actual_cost_usd),
         request_count=int(row.request_count),
         date=today,
     )
@@ -782,6 +789,10 @@ async def stats_overview(
     today = _today_prefix()
     stmt = select(
         func.coalesce(func.sum(UsageLog.cost_usd), 0).label("total_cost_usd"),
+        func.coalesce(
+            func.sum(UsageLog.cost_usd).filter(UsageLog.covered_by_package == False),  # noqa: E712
+            0,
+        ).label("actual_cost_usd"),
         func.count(UsageLog.id).label("request_count"),
     ).where(UsageLog.created_at.like(f"{today}%"))
 
@@ -789,6 +800,7 @@ async def stats_overview(
     row = result.one()
     return OverviewResponse(
         total_cost_usd=float(row.total_cost_usd),
+        actual_cost_usd=float(row.actual_cost_usd),
         request_count=int(row.request_count),
         date=today,
     )
@@ -1170,11 +1182,31 @@ voucher_router: APIRouter = crud_router(
     tags=["Admin: Vouchers"],
     create_deps=_common_deps,
     read_deps=_common_deps,
-    deleted_methods=["read_multi"],  # 手动实现，按 created_at 倒序
+    deleted_methods=["create", "read_multi"],  # 手动实现：create 需返回 code，read_multi 按 created_at 倒序
     update_deps=_common_deps,
     delete_deps=_common_deps,
     db_delete_deps=_common_deps,
 )
+
+
+@voucher_router.post("/admin/vouchers", tags=["Admin: Vouchers"], summary="创建消费券", status_code=201)
+async def create_voucher(
+    body: VoucherCreate,
+    session: AsyncSession = Depends(async_session_generator),
+    _: None = Depends(require_admin_access),
+) -> dict:
+    """批量创建消费券，code 自动生成，count=1 时返回单条记录，count>1 时返回 list。"""
+    count = max(1, body.count)
+    voucher_data = body.model_dump(exclude={"count"})
+    vouchers = [Voucher(**voucher_data) for _ in range(count)]
+    for v in vouchers:
+        session.add(v)
+    await session.commit()
+    for v in vouchers:
+        await session.refresh(v)
+    if count == 1:
+        return vouchers[0].model_dump()
+    return {"count": count, "vouchers": [v.model_dump() for v in vouchers]}
 
 
 @voucher_router.get("/admin/vouchers", tags=["Admin: Vouchers"], summary="列出消费券（按创建时间倒序）")

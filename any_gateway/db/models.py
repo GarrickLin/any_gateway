@@ -158,7 +158,7 @@ class Voucher(VoucherBase, table=True):
 
 
 class VoucherCreate(VoucherBase):
-    pass
+    count: int = 1  # 批量创建数量
 
 
 class VoucherUpdate(SQLModel):

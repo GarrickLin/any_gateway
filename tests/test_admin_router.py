@@ -142,6 +142,30 @@ def test_stats_overview_structure(client):
     assert "request_count" in data
 
 
+def test_stats_overview_actual_cost_usd(client):
+    """admin stats/overview 应包含 actual_cost_usd（covered_by_package=False 的汇总）"""
+    resp = client.get(
+        "/admin/stats/overview",
+        headers={"x-admin-key": "test-admin-secret"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "actual_cost_usd" in data
+
+
+def test_user_stats_overview_actual_cost_usd(client):
+    """user stats/overview 应包含 actual_cost_usd（covered_by_package=False 的汇总）"""
+    from services.auth_service import create_access_token
+    token = create_access_token("stats-user", "user")
+    resp = client.get(
+        "/user/stats/overview",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "actual_cost_usd" in data
+
+
 # ---------------------------------------------------------------------------
 # 4. stats/tokens 结构检查
 # ---------------------------------------------------------------------------

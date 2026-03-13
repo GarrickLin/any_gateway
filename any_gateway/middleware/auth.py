@@ -129,16 +129,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         group_id, redis_client, session, username=username
                     )
                 if passed:
-                    # 检查 group 是否有启用的 quota_limit 规则（有 → 套餐模式）
-                    from db.models import RateLimit
-                    async with AsyncSession(engine, expire_on_commit=False) as _s:
-                        rules_result = await FastCRUD(RateLimit).get_multi(_s, group_id=group_id)
-                    has_quota_limit = any(
-                        r["limit_type"] == "quota_limit" and r["value"] > 0
-                        for r in rules_result.get("data", [])
-                    )
-                    if has_quota_limit:
-                        request.state.covered_by_package = True
+                    request.state.covered_by_package = True  # 有 group 且通过 → 套餐内
                     return None  # 套餐通过，放行
                 # 套餐超限 → 降级 Type 2，保存 Type 1 超限原因
                 logger.info(f"Type 1 超限 ({error_msg})，降级到 Type 2: username={username}")

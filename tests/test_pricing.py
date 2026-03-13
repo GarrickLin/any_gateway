@@ -281,16 +281,15 @@ def test_maybe_deduct_deducts_when_not_covered():
 # ── Task 7 tests ──────────────────────────────────────────────────────────────
 
 def test_admin_create_voucher(client):
-    """管理员创建消费券，code 自动生成"""
+    """管理员创建消费券，响应直接包含 code 字段"""
     resp = client.post("/admin/vouchers", json={
         "amount_usd": 10.0,
     }, headers=ADMIN_HEADERS)
-    assert resp.status_code in (200, 201)
-    # FastCRUD create 有时返回 null body，改为通过 list 验证
-    list_resp = client.get("/admin/vouchers", headers=ADMIN_HEADERS)
-    assert list_resp.status_code == 200
-    vouchers = list_resp.json().get("data", [])
-    assert any(v["amount_usd"] == 10.0 and len(v["code"]) > 0 for v in vouchers)
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["amount_usd"] == 10.0
+    assert data["used"] is False
+    assert len(data["code"]) > 0
 
 
 def test_user_redeem_voucher(client):
