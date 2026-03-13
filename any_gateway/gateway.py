@@ -20,6 +20,7 @@ from db.models import Channel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select, col
 from services.quota import check_quota, update_usage, update_user_balance
+from services.pricing import calculate_cost
 from services.auth_service import require_auth, optional_require_auth
 from admin.router import token_router, channel_router, group_router, admin_router, auth_router, me_router, users_router, user_router, group_channel_router, user_group_router, rate_limit_router, model_price_router, group_model_price_router
 import yaml
@@ -336,6 +337,20 @@ async def find_backend_for_model(
         return None
 
 
+async def _get_group_multiplier(group_id: str | None) -> float:
+    """查询 group.multiplier，找不到返回 1.0。"""
+    if not group_id:
+        return 1.0
+    try:
+        async with AsyncSession(engine, expire_on_commit=False) as session:
+            from fastcrud import FastCRUD
+            from db.models import UserGroup
+            group = await FastCRUD(UserGroup).get(session, id=group_id)
+            return group.get("multiplier", 1.0) if group else 1.0
+    except Exception:
+        return 1.0
+
+
 async def _update_rate_limit_counters(
     group_id: str,
     request_id: str,
@@ -632,15 +647,30 @@ async def forward_streaming_request(
             logger.info(f"流式请求日志已入队, 当前task数量: {len(app.state.log_tasks)}")
 
             # fire-and-forget 更新用量
-            _stream_cost_usd = 0.0  # TODO: 实现真实定价
             _stream_usage = parse_stream_usage(accumulated_chunks, provider)
             _stream_input_tokens = _stream_usage.input_tokens
             _stream_output_tokens = _stream_usage.output_tokens
+            _stream_cache_read_tokens = _stream_usage.cache_read_tokens
+            _stream_cache_creation_tokens = _stream_usage.cache_creation_tokens
             logger.debug(
                 "流式用量解析完成: provider=%r input=%d output=%d cache_read=%d cache_creation=%d",
                 provider, _stream_input_tokens, _stream_output_tokens,
-                _stream_usage.cache_read_tokens, _stream_usage.cache_creation_tokens,
+                _stream_cache_read_tokens, _stream_cache_creation_tokens,
             )
+            # 计算真实费用
+            _stream_group_id = getattr(request.state, "token_group_id", None)
+            _stream_multiplier = await _get_group_multiplier(_stream_group_id)
+            async with AsyncSession(engine, expire_on_commit=False) as _ps:
+                _stream_cost_usd = await calculate_cost(
+                    session=_ps,
+                    group_id=_stream_group_id,
+                    model=model_name,
+                    input_tokens=_stream_input_tokens,
+                    output_tokens=_stream_output_tokens,
+                    cache_read_tokens=_stream_cache_read_tokens,
+                    cache_creation_tokens=_stream_cache_creation_tokens,
+                    multiplier=_stream_multiplier,
+                )
             usage_task = asyncio.create_task(
                 update_usage(
                     token_id=getattr(request.state, "token_id", None),
@@ -654,15 +684,14 @@ async def forward_streaming_request(
                     is_stream=True,
                     username=getattr(request.state, "token_username", None),
                     request_id=request_id,
-                    cache_read_tokens=_stream_usage.cache_read_tokens,
-                    cache_creation_tokens=_stream_usage.cache_creation_tokens,
+                    cache_read_tokens=_stream_cache_read_tokens,
+                    cache_creation_tokens=_stream_cache_creation_tokens,
                 )
             )
             app.state.log_tasks.add(usage_task)
             usage_task.add_done_callback(app.state.log_tasks.discard)
 
             # After 阶段：更新 Redis 限流计数（fire-and-forget）
-            _stream_group_id = getattr(request.state, "token_group_id", None)
             if _stream_group_id:
                 asyncio.create_task(_update_rate_limit_counters(
                     group_id=_stream_group_id,
@@ -868,7 +897,19 @@ async def forward_request(
             logger.info(f"当前task数量: {len(app.state.log_tasks)}")
 
             # fire-and-forget 更新用量（不阻塞响应）
-            _cost_usd = 0.0  # TODO: 实现真实定价
+            _group_id = getattr(request.state, "token_group_id", None)
+            _multiplier = await _get_group_multiplier(_group_id)
+            async with AsyncSession(engine, expire_on_commit=False) as _ps:
+                _cost_usd = await calculate_cost(
+                    session=_ps,
+                    group_id=_group_id,
+                    model=model_name,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cache_read_tokens=cache_read_tokens,
+                    cache_creation_tokens=cache_creation_tokens,
+                    multiplier=_multiplier,
+                )
             usage_task = asyncio.create_task(
                 update_usage(
                     token_id=getattr(request.state, "token_id", None),
@@ -890,7 +931,6 @@ async def forward_request(
             usage_task.add_done_callback(request.app.state.log_tasks.discard)
 
             # After 阶段：更新 Redis 限流计数（fire-and-forget）
-            _group_id = getattr(request.state, "token_group_id", None)
             if _group_id:
                 asyncio.create_task(_update_rate_limit_counters(
                     group_id=_group_id,
