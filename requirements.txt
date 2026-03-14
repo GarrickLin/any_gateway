@@ -11,6 +11,7 @@ fastcrud
 uvicorn
 pyyaml
 python-jose[cryptography]
+redis
 
 # streamlit
 # st_copy
