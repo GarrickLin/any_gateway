@@ -264,9 +264,7 @@ async def find_backend_for_model(
     def _pick(supported: list) -> Optional[Dict[str, str]]:
         """从候选渠道列表中加权随机选取，返回路由信息。"""
         chosen = _weighted_choice(supported)
-        info = _extract_model_info(chosen, model_name)
-        info["has_conflict"] = len(supported) > 1
-        return info
+        return _extract_model_info(chosen, model_name)
 
     async with AsyncSession(engine, expire_on_commit=False) as session:
         # 策略 1：token 绑定了特定分组，直接路由
@@ -333,7 +331,6 @@ async def find_backend_for_model(
         for channel in channels:
             info = _extract_model_info(channel, model_name)
             if info:
-                info["has_conflict"] = False
                 return info
         return None
 
@@ -732,11 +729,11 @@ async def forward_streaming_request(
 
 
 async def forward_request(
-    request: Request, path: str, backend_url: str, api_key: Optional[str] = None, provider: str = "", has_conflict: bool = False
+    request: Request, path: str, backend_url: str, api_key: Optional[str] = None, provider: str = ""
 ) -> Response:
     """
     转发请求到后端服务并返回响应。
-    如果提供了 api_key，会覆盖原请求中的 Authorization header。
+    如果提供了 api_key，透明替换客户端原始认证头的 value，保留 header key 不变。
     支持自动检测并转发流式响应（SSE）。
     """
 
@@ -758,33 +755,14 @@ async def forward_request(
     headers.pop("host", None)
     headers.pop("content-length", None)
 
-    # 如果提供了 api_key，按协议覆盖认证头
-    # 冲突时（多个渠道支持同一模型）优先根据请求路径末段判断认证格式，避免 provider 标注不一致导致错误
-    # 无冲突时直接信任 provider 字段
+    # 透明代理：保留客户端原始认证头的 key，仅替换 value 为渠道配置的 api_key
     if api_key:
-        headers.pop("authorization", None)
-        headers.pop("Authorization", None)
-        headers.pop("x-api-key", None)
-        headers.pop("x-goog-api-key", None)
-        # 取路径末段（去掉查询参数和版本前缀，如 /v1/、/v1beta/ 等）
-        clean_path = path.split("?")[0]
-        if has_conflict:
-            if clean_path.endswith("/messages") or clean_path == "messages":
-                headers["x-api-key"] = api_key
-                headers.setdefault("anthropic-version", "2023-06-01")
-            elif provider.lower() == "gemini":
-                headers["x-goog-api-key"] = api_key
-            else:
-                # chat/completions 及其他 OpenAI 兼容端点
-                headers["Authorization"] = f"Bearer {api_key}"
-        else:
-            if provider.lower() == "anthropic":
-                headers["x-api-key"] = api_key
-                headers.setdefault("anthropic-version", "2023-06-01")
-            elif provider.lower() == "gemini":
-                headers["x-goog-api-key"] = api_key
-            else:
-                headers["Authorization"] = f"Bearer {api_key}"
+        if "authorization" in headers:
+            headers["authorization"] = f"Bearer {api_key}"
+        if "x-api-key" in headers:
+            headers["x-api-key"] = api_key
+        if "x-goog-api-key" in headers:
+            headers["x-goog-api-key"] = api_key
 
     logger.info(f"Request body: {body[:200] if body else ''}")
     logger.info(f"Request headers: {headers}")
@@ -1329,12 +1307,11 @@ async def gateway(request: Request, path: str):
             group_id=getattr(request.state, "token_group_id", None),
         )
         if backend_info:
-            backend_url, api_key, model_name, backend_provider, has_conflict = (
+            backend_url, api_key, model_name, backend_provider = (
                 backend_info["base_url"],
                 backend_info["api_key"],
                 backend_info["model"],
                 backend_info.get("provider", ""),
-                backend_info.get("has_conflict", False),
             )
             logger.info(f"Found backend for model {backend_info}")
             body["model"] = model_name
@@ -1360,7 +1337,7 @@ async def gateway(request: Request, path: str):
 
     new_request = RequestWithBody(request.scope, request.receive)
 
-    return await forward_request(new_request, path, backend_url, api_key, backend_provider, has_conflict)
+    return await forward_request(new_request, path, backend_url, api_key, backend_provider)
 
 
 # --------------------------------------------------------------------------- #
