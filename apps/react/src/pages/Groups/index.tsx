@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import {
   Table, Button, Modal, Form, Input, InputNumber,
-  Popconfirm, Message, Space, Typography, Select, Tag, Radio
+  Popconfirm, Message, Space, Typography, Select, Tag, Radio, Switch
 } from '@arco-design/web-react'
 import { getGroups, createGroup, updateGroup, deleteGroup } from '../../api/groups'
 import { getChannels } from '../../api/channels'
@@ -303,6 +303,11 @@ const Groups: React.FC = () => {
     { title: '名称', dataIndex: 'name' },
     { title: 'Priority', dataIndex: 'priority' },
     { title: '费率倍数', dataIndex: 'multiplier' },
+    {
+      title: '全员可见',
+      dataIndex: 'all_visible',
+      render: (v: boolean) => v ? <Tag color="green">是</Tag> : <Tag color="gray">否</Tag>
+    },
     { title: '创建时间', dataIndex: 'created_at', render: (v: string) => v?.slice(0, 19) },
     {
       title: '操作',
@@ -345,6 +350,9 @@ const Groups: React.FC = () => {
           </Form.Item>
           <Form.Item field="multiplier" label="费率倍数" initialValue={1.0}>
             <InputNumber min={0.01} step={0.1} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item field="all_visible" label="全员可见" initialValue={false}>
+            <Switch checkedText="是" uncheckedText="否" />
           </Form.Item>
         </Form>
       </Modal>
