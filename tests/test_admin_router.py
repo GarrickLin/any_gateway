@@ -589,3 +589,32 @@ def test_rate_limit_error_message_format():
                 assert "60" in msg
 
     asyncio.run(_check())
+
+
+def test_my_status_endpoint(client):
+    """/auth/my-status 应返回余额和分组限流状态结构"""
+    # 用 fallback 账号登录获取 JWT
+    res = client.post(
+        "/admin/auth/login",
+        json={"username": "_admin_fallback", "password": os.environ["ADMIN_FALLBACK_KEY"]},
+    )
+    assert res.status_code == 200
+    token = res.json()["access_token"]
+
+    res = client.get(
+        "/auth/my-status",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert "quota_usd" in data
+    assert "used_usd" in data
+    assert "groups" in data
+    assert isinstance(data["groups"], list)
+    # 每个 group 有正确的字段
+    for g in data["groups"]:
+        assert "group_id" in g
+        assert "group_name" in g
+        assert "is_all_visible" in g
+        assert "rate_limits" in g
+        assert isinstance(g["rate_limits"], list)

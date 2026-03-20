@@ -209,6 +209,82 @@ async def admin_login(
     return {"access_token": token, "token_type": "bearer", "role": role}
 
 
+@me_router.get("/my-status", summary="获取当前用户状态（余额 + 分组限流剩余）")
+async def get_my_status(
+    user: dict = Depends(require_auth),
+    session: AsyncSession = Depends(async_session_generator),
+) -> dict:
+    import os
+    import redis.asyncio as aioredis
+    from db.models import User, RateLimit
+    from services.auth_service import get_visible_groups
+    from services.rate_limit_redis import build_key, get_window_count, get_window_sum
+
+    username = user["username"]
+
+    # 1. 获取用户余额
+    crud_user = FastCRUD(User)
+    db_user = await crud_user.get(session, username=username)
+    quota_usd = db_user.get("quota_usd") if db_user else 0
+    used_usd = db_user.get("used_usd", 0) if db_user else 0
+
+    # 2. 获取所有可见分组
+    groups = await get_visible_groups(username, session)
+
+    # 3. 尝试连接 Redis（不可用时 fail open）
+    redis_client = None
+    try:
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+        redis_client = aioredis.from_url(redis_url, decode_responses=True)
+    except Exception:
+        pass
+
+    # 4. 构建每个分组的限流状态
+    crud_rl = FastCRUD(RateLimit)
+    groups_status = []
+    for group in groups:
+        rl_result = await crud_rl.get_multi(session, group_id=group.id)
+        rules = rl_result.get("data", [])
+        rules_status = []
+        for rule in rules:
+            if rule["value"] <= 0:
+                continue
+            key = build_key(group.id, rule["limit_type"], rule["window_sec"], username)
+            try:
+                if rule["limit_type"] == "request_limit":
+                    current = await get_window_count(redis_client, key, rule["window_sec"]) if redis_client else 0
+                else:
+                    current = await get_window_sum(redis_client, key, rule["window_sec"]) if redis_client else 0
+            except Exception:
+                current = 0
+            limit = rule["value"]
+            remaining_pct = max(0.0, (limit - current) / limit * 100) if limit > 0 else 0.0
+            rules_status.append({
+                "rule_id": rule["id"],
+                "limit_type": rule["limit_type"],
+                "window_sec": rule["window_sec"],
+                "limit": limit,
+                "current": current,
+                "remaining_pct": round(remaining_pct, 1),
+            })
+
+        if not rules_status:
+            continue  # 无有效规则的分组不展示
+
+        groups_status.append({
+            "group_id": group.id,
+            "group_name": group.name,
+            "is_all_visible": group.all_visible,
+            "rate_limits": rules_status,
+        })
+
+    return {
+        "quota_usd": quota_usd,
+        "used_usd": used_usd,
+        "groups": groups_status,
+    }
+
+
 @me_router.get("/me", summary="获取当前登录用户信息")
 async def get_me(
     user: dict = Depends(require_auth),
