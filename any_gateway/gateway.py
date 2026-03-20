@@ -211,7 +211,7 @@ async def find_backend_for_model(
        在第一个支持该模型的分组内按 weight 加权随机选渠道。
     3. 其余情况，回退到旧逻辑：_admin_fallback / superadmin 遍历所有 enabled 渠道。
     """
-    from db.models import UserGroupMembership, UserGroup, GroupChannel
+    from db.models import UserGroup, GroupChannel
 
     def _extract_model_info(channel: Channel, req_model: str) -> Optional[Dict[str, str]]:
         """从 Channel 对象提取模型路由信息，不支持时返回 None。"""
@@ -285,15 +285,9 @@ async def find_backend_for_model(
         if not username:
             return None  # 匿名 token 不允许访问
 
-        # 1. 获取用户所属分组，按 priority 降序
-        stmt = (
-            select(UserGroup)
-            .join(UserGroupMembership, UserGroup.id == UserGroupMembership.group_id)
-            .where(UserGroupMembership.username == username)
-            .order_by(UserGroup.priority.desc())
-        )
-        result = await session.execute(stmt)
-        groups = result.scalars().all()
+        # 1. 获取用户可见分组（显式 membership + all_visible 分组），按 priority 降序
+        from services.auth_service import get_visible_groups
+        groups = await get_visible_groups(username, session)
 
         for group in groups:
             # 2. 获取该分组下所有 enabled 渠道
@@ -1026,7 +1020,7 @@ async def list_models(
     2. JWT → 原有逻辑（admin/superadmin 看全部，普通用户看所在分组）
     3. 两者都无 → 401
     """
-    from db.models import Channel, UserGroupMembership, GroupChannel
+    from db.models import Channel, GroupChannel
 
     # 从 middleware 注入的 API Key token 信息
     token_group_id: str | None = getattr(request.state, "token_group_id", None)
@@ -1057,12 +1051,16 @@ async def list_models(
         return list(entries.values())
 
     async def _channels_by_username(session, uname: str):
+        from services.auth_service import get_visible_groups
+        user_groups = await get_visible_groups(uname, session)
+        group_ids = [g.id for g in user_groups]
+        if not group_ids:
+            return []
         stmt = (
             select(Channel)
             .join(GroupChannel, col(Channel.id) == col(GroupChannel.channel_id))
-            .join(UserGroupMembership, col(GroupChannel.group_id) == col(UserGroupMembership.group_id))
             .where(
-                UserGroupMembership.username == uname,
+                GroupChannel.group_id.in_(group_ids),
                 col(Channel.enabled) == True,
             )
             .distinct()
