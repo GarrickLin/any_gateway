@@ -653,9 +653,9 @@ async def forward_streaming_request(
             _stream_cache_read_tokens = _stream_usage.cache_read_tokens
             _stream_cache_creation_tokens = _stream_usage.cache_creation_tokens
             logger.debug(
-                "流式用量解析完成: provider=%r input=%d output=%d cache_read=%d cache_creation=%d",
-                provider, _stream_input_tokens, _stream_output_tokens,
-                _stream_cache_read_tokens, _stream_cache_creation_tokens,
+                f"流式用量解析完成: provider={provider!r} input={_stream_input_tokens} "
+                f"output={_stream_output_tokens} cache_read={_stream_cache_read_tokens} "
+                f"cache_creation={_stream_cache_creation_tokens}"
             )
             # 计算真实费用
             _stream_group_id = getattr(request.state, "token_group_id", None)
@@ -783,7 +783,7 @@ async def forward_request(
         if body_json_parsed is not None and provider.lower() not in ("anthropic", "gemini"):
             inject_stream_options(body_json_parsed, provider)
             body = json.dumps(body_json_parsed).encode("utf-8")
-            logger.debug("已注入 stream_options.include_usage=true (provider=%r)", provider)
+            logger.debug(f"已注入 stream_options.include_usage=true (provider={provider!r})")
         return await forward_streaming_request(
             request, path, url, headers, body, backend_url, model_name, start_time,
             request_id, provider,
