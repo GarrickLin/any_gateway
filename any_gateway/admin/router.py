@@ -1063,19 +1063,14 @@ async def get_user_groups_for_user(
     username: str,
     session: AsyncSession = Depends(async_session_generator),
 ) -> list:
-    from db.models import UserGroup, UserGroupMembership
-    result = await session.execute(
-        select(UserGroup)
-        .join(UserGroupMembership, UserGroup.id == UserGroupMembership.group_id)
-        .where(UserGroupMembership.username == username)
-        .order_by(UserGroup.priority.desc())
-    )
-    groups = result.scalars().all()
+    from services.auth_service import get_visible_groups
+    groups = await get_visible_groups(username, session)
     return [
         {
             "id": g.id,
             "name": g.name,
             "priority": g.priority,
+            "all_visible": g.all_visible,
         }
         for g in groups
     ]
