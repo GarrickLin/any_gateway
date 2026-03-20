@@ -18,3 +18,22 @@ export const login = (username: string, password: string) =>
 
 export const getMe = () =>
   client.get<MeResponse>('/auth/me')
+
+export const getMyStatus = () =>
+  client.get<{
+    quota_usd: number | null
+    used_usd: number
+    groups: Array<{
+      group_id: string
+      group_name: string
+      is_all_visible: boolean
+      rate_limits: Array<{
+        rule_id: string
+        limit_type: string
+        window_sec: number
+        limit: number
+        current: number
+        remaining_pct: number
+      }>
+    }>
+  }>('/auth/my-status')

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
   Grid, Card, Statistic, Table, Progress,
-  Typography, Spin, Message, Input,
+  Typography, Spin, Message, Input, Space, Tag,
 } from '@arco-design/web-react'
 import { IconRefresh } from '@arco-design/web-react/icon'
 import { Button } from '@arco-design/web-react'
@@ -9,7 +9,7 @@ import {
   getStatsOverview, getStatsTokens, getStatsModels,
   getMyStatsOverview, getMyStatsTokens, getMyStatsModels,
 } from '../../api/logs'
-import { getMe } from '../../api/auth'
+import { getMe, getMyStatus } from '../../api/auth'
 import { useAuthStore } from '../../store/auth'
 import { redeemVoucher } from '../../api/vouchers'
 
@@ -34,6 +34,33 @@ interface ModelStat {
   request_count: number
 }
 
+interface RateLimit {
+  rule_id: string
+  limit_type: string
+  window_sec: number
+  limit: number
+  current: number
+  remaining_pct: number
+}
+
+interface GroupStatus {
+  group_id: string
+  group_name: string
+  is_all_visible: boolean
+  rate_limits: RateLimit[]
+}
+
+interface MyStatus {
+  quota_usd: number | null
+  used_usd: number
+  groups: GroupStatus[]
+}
+
+interface RateLimitRow extends RateLimit {
+  group_name: string
+  is_all_visible: boolean
+}
+
 const Dashboard: React.FC = () => {
   const { role } = useAuthStore()
   const isAdmin = role === 'admin' || role === 'superadmin'
@@ -43,6 +70,7 @@ const Dashboard: React.FC = () => {
   const [models, setModels] = useState<ModelStat[]>([])
   const [loading, setLoading] = useState(false)
   const [meData, setMeData] = useState<{ quota_usd: number | null; used_usd: number } | null>(null)
+  const [myStatus, setMyStatus] = useState<MyStatus | null>(null)
   const [voucherCode, setVoucherCode] = useState('')
   const [redeeming, setRedeeming] = useState(false)
   const [voucherError, setVoucherError] = useState('')
@@ -63,6 +91,12 @@ const Dashboard: React.FC = () => {
       Message.error('数据加载失败')
     } finally {
       setLoading(false)
+    }
+    try {
+      const statusRes = await getMyStatus()
+      setMyStatus(statusRes.data)
+    } catch {
+      // Redis 不可用或未登录时静默处理
     }
   }, [isAdmin])
 
@@ -252,6 +286,85 @@ const Dashboard: React.FC = () => {
             </Card>
           </Col>
         </Row>
+
+        {/* 用户余额 Card */}
+        {myStatus && (
+          <Card style={{ marginTop: 24 }} title="账户余额">
+            <Row gutter={24}>
+              <Col span={8}>
+                <Statistic
+                  title="总额度"
+                  value={myStatus.quota_usd != null ? myStatus.quota_usd : '无限'}
+                  suffix={myStatus.quota_usd != null ? ' USD' : ''}
+                />
+              </Col>
+              <Col span={8}>
+                <Statistic title="已消费" value={myStatus.used_usd?.toFixed(4)} suffix=" USD" />
+              </Col>
+              <Col span={8}>
+                <Statistic
+                  title="剩余"
+                  value={myStatus.quota_usd != null
+                    ? (myStatus.quota_usd - myStatus.used_usd).toFixed(4)
+                    : '无限'}
+                  suffix={myStatus.quota_usd != null ? ' USD' : ''}
+                />
+              </Col>
+            </Row>
+          </Card>
+        )}
+
+        {/* 分组限流状态 Card */}
+        {myStatus?.groups?.length > 0 && (
+          <Card style={{ marginTop: 16 }} title="分组限流状态">
+            <Table
+              rowKey="rule_id"
+              pagination={false}
+              data={myStatus.groups.flatMap((g: GroupStatus) =>
+                g.rate_limits.map((r: RateLimit) => ({ ...r, group_name: g.group_name, is_all_visible: g.is_all_visible }))
+              )}
+              columns={[
+                {
+                  title: '分组',
+                  dataIndex: 'group_name',
+                  render: (v: string, row: RateLimitRow) => (
+                    <Space size="small">
+                      {v}
+                      {row.is_all_visible && <Tag color="green" size="small">全员</Tag>}
+                    </Space>
+                  )
+                },
+                {
+                  title: '类型',
+                  dataIndex: 'limit_type',
+                  render: (v: string) => ({ request_limit: '请求数', token_limit: 'Token', quota_limit: '金额' }[v] ?? v)
+                },
+                {
+                  title: '窗口',
+                  dataIndex: 'window_sec',
+                  render: (v: number) => v >= 86400 ? `${v/86400}天` : v >= 3600 ? `${v/3600}小时` : `${Math.round(v/60)}分钟`
+                },
+                { title: '当前', dataIndex: 'current' },
+                { title: '上限', dataIndex: 'limit' },
+                {
+                  title: '剩余',
+                  dataIndex: 'remaining_pct',
+                  render: (v: number) => (
+                    <Space size="small">
+                      <Progress
+                        percent={v}
+                        size="small"
+                        style={{ width: 80 }}
+                        status={v < 20 ? 'error' : v < 50 ? 'warning' : 'normal'}
+                      />
+                      <span>{v.toFixed(1)}%</span>
+                    </Space>
+                  )
+                },
+              ]}
+            />
+          </Card>
+        )}
       </Spin>
     </div>
   )
