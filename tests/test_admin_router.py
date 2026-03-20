@@ -558,3 +558,34 @@ def test_rate_limits_filtered_by_group(client):
     assert isinstance(rules, list)
     assert len(rules) >= 1
     assert all(r["group_id"] == g1["id"] for r in rules)
+
+
+def test_rate_limit_error_message_format():
+    """check_rate_limits 错误信息应包含当前值/上限和单位"""
+    import asyncio
+    from unittest.mock import patch
+
+    async def _check():
+        from services.rate_limit_service import check_rate_limits
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from db.models import UserGroup, RateLimit
+        from uuid import uuid4
+
+        async with AsyncSession(TEST_ENGINE, expire_on_commit=False) as session:
+            gid = uuid4().hex
+            session.add(UserGroup(id=gid, name=f"rl-msg-{gid[:6]}", priority=1, multiplier=1.0))
+            session.add(RateLimit(group_id=gid, window_sec=60, limit_type="request_limit", value=5))
+            await session.commit()
+
+            with patch("services.rate_limit_service.get_window_count", return_value=10):
+                from unittest.mock import AsyncMock
+                mock_redis = AsyncMock()
+                passed, msg = await check_rate_limits(gid, mock_redis, session)
+                assert passed is False
+                assert msg is not None
+                assert "10" in msg
+                assert "5" in msg
+                assert "requests" in msg
+                assert "60" in msg
+
+    asyncio.run(_check())

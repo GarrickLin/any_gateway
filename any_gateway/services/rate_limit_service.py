@@ -44,16 +44,16 @@ async def check_rate_limits(
         if limit_type == "request_limit":
             current = await get_window_count(redis_client, key, window_sec)
             if not check_request_limit(current, value):
-                return False, f"request_limit exceeded (window={window_sec}s)"
+                return False, f"request_limit exceeded: {int(current)}/{int(value)} requests in {window_sec}s"
 
         elif limit_type == "token_limit":
             current = await get_window_sum(redis_client, key, window_sec)
             if not check_token_limit(int(current), value):
-                return False, f"token_limit exceeded (window={window_sec}s)"
+                return False, f"token_limit exceeded: {int(current)}/{int(value)} tokens in {window_sec}s"
 
         elif limit_type == "quota_limit":
             current = await get_window_sum(redis_client, key, window_sec)
             if not check_rolling_cost_limit(current, value):
-                return False, f"quota_limit exceeded (window={window_sec}s)"
+                return False, f"quota_limit exceeded: {current:.2f}/{value:.2f} USD in {window_sec}s"
 
     return True, None
