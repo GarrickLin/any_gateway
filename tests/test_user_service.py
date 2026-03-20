@@ -38,7 +38,7 @@ def setup_db():
 
 
 def test_lazy_create_user_new():
-    """首次调用应创建 User 并加入 default 分组。"""
+    """首次调用应创建 User 记录，不写入 UserGroupMembership。"""
     from services.auth_service import lazy_create_user
     from db.models import User, UserGroupMembership
 
@@ -56,25 +56,27 @@ def test_lazy_create_user_new():
     user, memberships = asyncio.run(_run())
     assert user is not None
     assert user.username == "alice"
-    assert len(memberships) == 1  # 加入了 default 分组
+    assert len(memberships) == 0  # 不再写入 membership，分组可见性由 all_visible 动态控制
 
 
 def test_lazy_create_user_idempotent():
-    """重复调用不应报错，也不应重复插入记录。"""
+    """重复调用不应报错，User 记录仍唯一，不写入 membership。"""
     from services.auth_service import lazy_create_user
-    from db.models import UserGroupMembership
+    from db.models import User, UserGroupMembership
 
     async def _run():
         async with AsyncSession(ENGINE, expire_on_commit=False) as s:
-            await lazy_create_user("alice", s)  # 第二次调用
+            await lazy_create_user("alice", s)  # 第二次调用（alice 已存在）
             await s.commit()
+            user = await s.get(User, "alice")
             result = await s.execute(
                 select(UserGroupMembership).where(UserGroupMembership.username == "alice")
             )
-            return result.scalars().all()
+            return user, result.scalars().all()
 
-    memberships = asyncio.run(_run())
-    assert len(memberships) == 1  # 依然只有一条
+    user, memberships = asyncio.run(_run())
+    assert user is not None
+    assert len(memberships) == 0  # 依然没有 membership 记录
 
 
 def test_lazy_create_user_no_default_group():

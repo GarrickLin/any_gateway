@@ -475,3 +475,48 @@ def test_group_all_visible_field(client):
     hidden_grp = next((g for g in groups2["data"] if g["name"] == "hidden-test"), None)
     assert hidden_grp is not None
     assert hidden_grp["all_visible"] is False
+
+
+def test_get_visible_groups_includes_all_visible(client):
+    """get_visible_groups 应返回 all_visible=True 的分组，即使用户没有 membership"""
+    import asyncio
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from services.auth_service import get_visible_groups
+
+    # 创建 all_visible 分组（通过 admin API，确保已写入 DB）
+    client.post(
+        "/admin/groups",
+        json={"name": "public-group-test", "priority": 1, "multiplier": 1.0, "all_visible": True},
+        headers={"x-admin-key": "test-admin-secret"},
+    )
+
+    async def _check():
+        async with AsyncSession(TEST_ENGINE, expire_on_commit=False) as session:
+            groups = await get_visible_groups("some-user-no-membership", session)
+            names = [g.name for g in groups]
+            assert "public-group-test" in names
+
+    asyncio.run(_check())
+
+
+def test_lazy_create_user_no_default_join(client):
+    """lazy_create_user 不应再写入 UserGroupMembership 记录"""
+    import asyncio
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlmodel import select
+    from db.models import UserGroupMembership
+    from services.auth_service import lazy_create_user
+
+    async def _check():
+        async with AsyncSession(TEST_ENGINE, expire_on_commit=False) as session:
+            await lazy_create_user("newuser-no-group-123", session)
+            await session.commit()
+            result = await session.execute(
+                select(UserGroupMembership).where(
+                    UserGroupMembership.username == "newuser-no-group-123"
+                )
+            )
+            memberships = result.scalars().all()
+            assert len(memberships) == 0  # 不应写入任何记录
+
+    asyncio.run(_check())

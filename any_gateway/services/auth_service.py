@@ -201,37 +201,51 @@ async def optional_require_auth(
 
 
 async def lazy_create_user(username: str, session: AsyncSession) -> None:
-    """首次登录时懒加载创建 User 记录并加入 default 分组。
+    """首次登录时懒加载创建 User 记录。
 
-    幂等：若 User 已存在则跳过；若已在 default 分组则不重复加入。
+    不再写入 UserGroupMembership——分组可见性由 all_visible 字段动态控制。
 
     Args:
         username: AD 用户名（大小写敏感，与 LDAP 保持一致）。
         session:  已打开的异步数据库 session。
     """
-    from db.models import User, UserGroup, UserGroupMembership
+    from db.models import User
 
-    # 1. 确保 User 记录存在
     existing_user = await session.get(User, username)
     if existing_user is None:
         session.add(User(username=username))
-        await session.flush()  # 确保 User 已写入，避免 PG 外键约束失败
+        await session.flush()
 
-    # 2. 查找 default 分组
-    result = await session.execute(
-        select(UserGroup).where(UserGroup.name == "default")
-    )
-    default_group = result.scalar_one_or_none()
-    if default_group is None:
-        logger.warning("default 分组不存在，跳过用户分组加入")
-        return
 
-    # 3. 确保用户在 default 分组中（幂等）
-    result = await session.execute(
-        select(UserGroupMembership).where(
-            UserGroupMembership.username == username,
-            UserGroupMembership.group_id == default_group.id,
+async def get_visible_groups(username: str, session: AsyncSession) -> list:
+    """返回用户可见的所有分组：显式 membership 分组 + all_visible=True 分组。
+
+    动态查询，不依赖 membership 记录，all_visible 分组立即对所有用户生效。
+    结果按 priority 降序排列。
+
+    Args:
+        username: 用户名。
+        session:  已打开的异步数据库 session。
+
+    Returns:
+        UserGroup 列表，按 priority 降序排列。
+    """
+    from sqlalchemy import or_
+    from db.models import UserGroup, UserGroupMembership
+
+    stmt = (
+        select(UserGroup)
+        .where(
+            or_(
+                UserGroup.id.in_(
+                    select(UserGroupMembership.group_id).where(
+                        UserGroupMembership.username == username
+                    )
+                ),
+                UserGroup.all_visible == True,
+            )
         )
+        .order_by(UserGroup.priority.desc())
     )
-    if result.scalar_one_or_none() is None:
-        session.add(UserGroupMembership(username=username, group_id=default_group.id))
+    result = await session.execute(stmt)
+    return result.scalars().all()
