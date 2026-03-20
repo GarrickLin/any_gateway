@@ -218,7 +218,7 @@ const UserGroupTab: React.FC = () => {
   // 已在用户分组中的 id 集合
   const userGroupIds = new Set(userGroups.map((g) => g.id))
   const groupOptions = allGroups
-    .filter((g) => !userGroupIds.has(g.id))
+    .filter((g) => !g.all_visible && !userGroupIds.has(g.id))
     .map((g) => ({ label: g.name, value: g.id }))
 
   const adUserColumns = [
@@ -248,8 +248,17 @@ const UserGroupTab: React.FC = () => {
     { title: '分组名称', dataIndex: 'name' },
     { title: 'Priority', dataIndex: 'priority' },
     {
+      title: '类型',
+      dataIndex: 'all_visible',
+      render: (v: boolean) => v
+        ? <Tag color="green" size="small">全员可见</Tag>
+        : <Tag color="arcoblue" size="small">手动分配</Tag>
+    },
+    {
       title: '操作',
-      render: (_: any, row: any) => (
+      render: (_: any, row: any) => row.all_visible ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>自动加入</Typography.Text>
+      ) : (
         <Popconfirm
           title={`确认将用户 "${selectedUser}" 从分组 "${row.name}" 移除？`}
           onOk={() => handleRemoveUserFromGroup(row.id)}
