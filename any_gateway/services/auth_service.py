@@ -217,7 +217,7 @@ async def lazy_create_user(username: str, session: AsyncSession) -> None:
         await session.flush()
 
 
-async def get_visible_groups(username: str, session: AsyncSession) -> list:
+async def get_visible_groups(username: str, session: AsyncSession) -> "list[UserGroup]":
     """返回用户可见的所有分组：显式 membership 分组 + all_visible=True 分组。
 
     动态查询，不依赖 membership 记录，all_visible 分组立即对所有用户生效。
@@ -242,7 +242,7 @@ async def get_visible_groups(username: str, session: AsyncSession) -> list:
                         UserGroupMembership.username == username
                     )
                 ),
-                UserGroup.all_visible == True,
+                UserGroup.all_visible.is_(True),
             )
         )
         .order_by(UserGroup.priority.desc())
