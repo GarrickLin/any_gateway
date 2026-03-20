@@ -350,7 +350,6 @@ def test_user_can_list_groups(client):
 # 9. /v1/models 可选 API Key 认证测试
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(reason="requires Task 2: /v1/models endpoint to support optional auth from request.state")
 def test_models_with_valid_api_key_returns_200(client):
     """GET /v1/models 携带有效 API Key（x-api-key header）时，middleware 应注入 token 信息，endpoint 返回 200。"""
     login = client.post("/admin/auth/login", json={"username": "_admin_fallback", "password": os.environ["ADMIN_FALLBACK_KEY"]})
@@ -364,7 +363,6 @@ def test_models_with_valid_api_key_returns_200(client):
     assert "data" in res.json()
 
 
-@pytest.mark.xfail(reason="requires Task 2: /v1/models endpoint to support optional auth from request.state")
 def test_models_with_x_goog_api_key_header(client):
     """GET /v1/models 携带有效 key 通过 x-goog-api-key header 时，应返回 200。"""
     login = client.post("/admin/auth/login", json={"username": "_admin_fallback", "password": os.environ["ADMIN_FALLBACK_KEY"]})
@@ -374,6 +372,19 @@ def test_models_with_x_goog_api_key_header(client):
     key = tok["key"]
 
     res = client.get("/v1/models", headers={"x-goog-api-key": key})
+    assert res.status_code == 200
+    assert "data" in res.json()
+
+
+def test_models_with_authorization_bearer_header(client):
+    """GET /v1/models 携带有效 API Key（Authorization: Bearer header）时，应返回 200。"""
+    login = client.post("/admin/auth/login", json={"username": "_admin_fallback", "password": os.environ["ADMIN_FALLBACK_KEY"]})
+    jwt = login.json()["access_token"]
+    user_headers = {"Authorization": f"Bearer {jwt}"}
+    tok = client.post("/user/tokens", json={"name": "models-bearer-key"}, headers=user_headers).json()
+    key = tok["key"]
+
+    res = client.get("/v1/models", headers={"Authorization": f"Bearer {key}"})
     assert res.status_code == 200
     assert "data" in res.json()
 
@@ -437,3 +448,30 @@ def test_models_filtered_by_token_group(client):
     model_ids = [m["id"] for m in res.json()["data"]]
     assert "model-only-in-a" in model_ids
     assert "model-only-in-b" not in model_ids
+
+
+def test_group_all_visible_field(client):
+    """UserGroup 应支持 all_visible 字段"""
+    res = client.post(
+        "/admin/groups",
+        json={"name": "visible-test", "priority": 1, "multiplier": 1.0, "all_visible": True},
+        headers={"x-admin-key": "test-admin-secret"},
+    )
+    assert res.status_code in (200, 201)
+    # FastCRUD create 返回 None（无 select_schema），需通过 GET 验证字段
+    groups = client.get("/admin/groups", headers={"x-admin-key": "test-admin-secret"}).json()
+    visible_grp = next((g for g in groups["data"] if g["name"] == "visible-test"), None)
+    assert visible_grp is not None
+    assert visible_grp["all_visible"] is True
+
+    # 默认值应为 False
+    res2 = client.post(
+        "/admin/groups",
+        json={"name": "hidden-test", "priority": 1, "multiplier": 1.0},
+        headers={"x-admin-key": "test-admin-secret"},
+    )
+    assert res2.status_code in (200, 201)
+    groups2 = client.get("/admin/groups", headers={"x-admin-key": "test-admin-secret"}).json()
+    hidden_grp = next((g for g in groups2["data"] if g["name"] == "hidden-test"), None)
+    assert hidden_grp is not None
+    assert hidden_grp["all_visible"] is False

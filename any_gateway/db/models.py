@@ -18,6 +18,7 @@ class UserGroupBase(SQLModel):
     name: str = Field(unique=True)
     priority: int = Field(default=1)
     multiplier: float = Field(default=1.0)
+    all_visible: bool = Field(default=False)
 
 
 class UserGroup(UserGroupBase, table=True):
@@ -33,6 +34,7 @@ class UserGroupCreate(UserGroupBase):
 class UserGroupUpdate(SQLModel):
     priority: int | None = None
     multiplier: float | None = None
+    all_visible: bool | None = None
 
 
 # =======================
