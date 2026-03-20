@@ -520,3 +520,41 @@ def test_lazy_create_user_no_default_join(client):
             assert len(memberships) == 0  # 不应写入任何记录
 
     asyncio.run(_check())
+
+
+def test_rate_limits_filtered_by_group(client):
+    """GET /admin/rate-limits?group_id=xxx 应只返回该分组的规则"""
+    ADMIN_HEADERS = {"x-admin-key": "test-admin-secret"}
+
+    # 创建两个分组（FastCRUD create 返回 null，需用 GET 获取 id）
+    client.post("/admin/groups", json={"name": "rl-group-1", "priority": 1, "multiplier": 1.0}, headers=ADMIN_HEADERS)
+    client.post("/admin/groups", json={"name": "rl-group-2", "priority": 1, "multiplier": 1.0}, headers=ADMIN_HEADERS)
+    groups_resp = client.get("/admin/groups", headers=ADMIN_HEADERS).json()
+    g1 = next(g for g in groups_resp["data"] if g["name"] == "rl-group-1")
+    g2 = next(g for g in groups_resp["data"] if g["name"] == "rl-group-2")
+
+    # 各自创建一条规则
+    client.post(
+        "/admin/rate-limits",
+        json={"group_id": g1["id"], "window_sec": 60, "limit_type": "request_limit", "value": 10},
+        headers=ADMIN_HEADERS,
+    )
+    client.post(
+        "/admin/rate-limits",
+        json={"group_id": g2["id"], "window_sec": 60, "limit_type": "request_limit", "value": 20},
+        headers=ADMIN_HEADERS,
+    )
+
+    # 查询 group 1 的规则，应只返回 1 条且属于 g1
+    res = client.get(
+        "/admin/rate-limits",
+        params={"group_id": g1["id"]},
+        headers=ADMIN_HEADERS,
+    )
+    assert res.status_code == 200
+    body = res.json()
+    # FastCRUD read_multi 返回 {"data": [...], "total_count": N}
+    rules = body.get("data", body) if isinstance(body, dict) else body
+    assert isinstance(rules, list)
+    assert len(rules) >= 1
+    assert all(r["group_id"] == g1["id"] for r in rules)

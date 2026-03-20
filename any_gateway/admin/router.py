@@ -1132,11 +1132,22 @@ rate_limit_router = crud_router(
     tags=["Rate Limits"],
     create_deps=_common_deps,
     read_deps=_common_deps,
-    read_multi_deps=_common_deps,
+    deleted_methods=["read_multi"],
     update_deps=_common_deps,
     delete_deps=_common_deps,
     db_delete_deps=_common_deps,
 )
+
+
+@admin_router.get("/rate-limits", tags=["Rate Limits"], summary="获取分组限流规则列表")
+async def list_rate_limits(
+    group_id: str,
+    session: AsyncSession = Depends(async_session_generator),
+    _: None = Depends(require_admin_access),
+) -> dict:
+    crud = FastCRUD(RateLimit)
+    result = await crud.get_multi(session, group_id=group_id)
+    return result
 
 model_price_router: APIRouter = crud_router(
     session=async_session_generator,
