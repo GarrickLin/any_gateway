@@ -15,6 +15,9 @@ export interface PromoteRequest {
 export const getAdminUsers = () =>
   client.get<AdminUser[]>('/admin/users')
 
+export const getUsersList = () =>
+  client.get<Array<{ username: string; created_at: string }>>('/admin/users-list')
+
 export const promoteUser = (data: PromoteRequest) =>
   client.post('/admin/users/promote', data)
 

@@ -7,6 +7,8 @@ Admin CRUD API 路由。
 """
 
 import asyncio
+import csv
+import io
 import json
 import os
 from datetime import datetime, timezone
@@ -14,12 +16,12 @@ from typing import Any
 
 import httpx
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from fastcrud import FastCRUD, crud_router
 from jose import JWTError
 from loguru import logger
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import asc, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import async_session_generator
@@ -316,6 +318,7 @@ class OverviewResponse(BaseModel):
     total_cost_usd: float
     actual_cost_usd: float
     request_count: int
+    total_token_usage: int
     date: str
 
 
@@ -330,6 +333,18 @@ class TokenStatsItem(BaseModel):
 class ModelStatsItem(BaseModel):
     model: str | None
     request_count: int
+
+
+class UsageStatsItem(BaseModel):
+    username: str | None
+    model: str | None
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
+    total_token_usage: int
+    request_count: int
+    total_cost_usd: float
 
 
 # ---------------------------------------------------------------------------
@@ -539,13 +554,10 @@ async def list_my_logs(
 async def user_stats_overview(
     session: AsyncSession = Depends(async_session_generator),
     current_user: dict = Depends(require_auth),
+    start_at: str | None = None,
+    end_at: str | None = None,
 ) -> OverviewResponse:
-    """返回当前用户今日总费用（USD）和请求数。"""
-    today = _today_prefix()
-    base_filter = [
-        UsageLog.created_at.like(f"{today}%"),
-        UsageLog.username == current_user["username"],
-    ]
+    """返回当前用户在筛选范围内的总费用（USD）、请求数和 Token 用量。"""
     stmt = select(
         func.coalesce(func.sum(UsageLog.cost_usd), 0).label("total_cost_usd"),
         func.coalesce(
@@ -553,14 +565,61 @@ async def user_stats_overview(
             0,
         ).label("actual_cost_usd"),
         func.count(UsageLog.id).label("request_count"),
-    ).where(*base_filter)
+        func.coalesce(func.sum(_total_token_usage_expr()), 0).label("total_token_usage"),
+    )
+    stmt = _apply_stats_time_filters(stmt, start_at=start_at, end_at=end_at)
+    stmt = _apply_stats_username_filter(stmt, username=current_user["username"])
     result = await session.execute(stmt)
     row = result.one()
     return OverviewResponse(
         total_cost_usd=float(row.total_cost_usd),
         actual_cost_usd=float(row.actual_cost_usd),
         request_count=int(row.request_count),
-        date=today,
+        total_token_usage=int(row.total_token_usage),
+        date=_today_prefix(),
+    )
+
+
+@user_router.get("/stats/usage", summary="按模型统计当前用户用量")
+async def user_stats_usage(
+    session: AsyncSession = Depends(async_session_generator),
+    current_user: dict = Depends(require_auth),
+    start_at: str | None = None,
+    end_at: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
+) -> dict:
+    return await _list_usage_stats(
+        session,
+        start_at=start_at,
+        end_at=end_at,
+        username=current_user["username"],
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+
+
+@user_router.get("/stats/usage/export", summary="导出当前用户用量统计 CSV")
+async def user_stats_usage_export(
+    session: AsyncSession = Depends(async_session_generator),
+    current_user: dict = Depends(require_auth),
+    start_at: str | None = None,
+    end_at: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
+) -> Response:
+    return await _export_usage_stats_csv(
+        session,
+        start_at=start_at,
+        end_at=end_at,
+        username=current_user["username"],
+        sort_by=sort_by,
+        sort_order=sort_order,
+        include_username=False,
     )
 
 
@@ -606,31 +665,24 @@ async def user_stats_tokens(
 async def user_stats_models(
     session: AsyncSession = Depends(async_session_generator),
     current_user: dict = Depends(require_auth),
-) -> list[ModelStatsItem]:
-    """返回当前用户今日请求数 Top 10 的模型（按 request_count 降序）。"""
-    today = _today_prefix()
-    stmt = (
-        select(
-            UsageLog.model,
-            func.count(UsageLog.id).label("request_count"),
-        )
-        .where(
-            UsageLog.created_at.like(f"{today}%"),
-            UsageLog.username == current_user["username"],
-        )
-        .group_by(UsageLog.model)
-        .order_by(func.count(UsageLog.id).desc())
-        .limit(10)
+    start_at: str | None = None,
+    end_at: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
+) -> dict:
+    """返回当前用户按模型聚合的分页请求统计。"""
+    return await _list_model_stats(
+        session,
+        start_at=start_at,
+        end_at=end_at,
+        username=current_user["username"],
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
-    result = await session.execute(stmt)
-    rows = result.all()
-    return [
-        ModelStatsItem(
-            model=row.model,
-            request_count=int(row.request_count),
-        )
-        for row in rows
-    ]
 
 
 # ---------------------------------------------------------------------------
@@ -865,12 +917,235 @@ def _today_prefix() -> str:
     return datetime.now(timezone.utc).date().isoformat()  # e.g. "2026-03-04"
 
 
+def _total_token_usage_expr():
+    """总 Token 用量 = input + output + cache read + cache write。"""
+    return (
+        UsageLog.input_tokens
+        + UsageLog.output_tokens
+        + UsageLog.cache_read_tokens
+        + UsageLog.cache_creation_tokens
+    )
+
+
+def _apply_stats_time_filters(stmt, start_at: str | None = None, end_at: str | None = None):
+    """统计接口时间过滤；未指定范围时保持旧行为，仅统计今日。"""
+    if start_at or end_at:
+        if start_at:
+            stmt = stmt.where(UsageLog.created_at >= start_at)
+        if end_at:
+            stmt = stmt.where(UsageLog.created_at <= end_at)
+        return stmt
+    return stmt.where(UsageLog.created_at.like(f"{_today_prefix()}%"))
+
+
+def _apply_stats_username_filter(stmt, username: str | None = None):
+    """统计接口用户名过滤。"""
+    if username:
+        stmt = stmt.where(UsageLog.username == username)
+    return stmt
+
+
+def _build_usage_stats_agg(start_at: str | None = None, end_at: str | None = None, username: str | None = None):
+    """构造按 用户名 + 模型 聚合的 usage 统计查询。"""
+    stmt = select(
+        UsageLog.username.label("username"),
+        UsageLog.model.label("model"),
+        func.coalesce(func.sum(UsageLog.input_tokens), 0).label("input_tokens"),
+        func.coalesce(func.sum(UsageLog.output_tokens), 0).label("output_tokens"),
+        func.coalesce(func.sum(UsageLog.cache_read_tokens), 0).label("cache_read_tokens"),
+        func.coalesce(func.sum(UsageLog.cache_creation_tokens), 0).label("cache_creation_tokens"),
+        func.coalesce(func.sum(_total_token_usage_expr()), 0).label("total_token_usage"),
+        func.count(UsageLog.id).label("request_count"),
+        func.coalesce(func.sum(UsageLog.cost_usd), 0).label("total_cost_usd"),
+    )
+    stmt = _apply_stats_time_filters(stmt, start_at=start_at, end_at=end_at)
+    stmt = _apply_stats_username_filter(stmt, username=username)
+    return stmt.group_by(UsageLog.username, UsageLog.model)
+
+
+def _apply_usage_sort(stmt, subquery, sort_by: str | None = None, sort_order: str | None = None):
+    """按白名单字段为 usage 聚合结果排序。"""
+    allowed = {
+        "username": subquery.c.username,
+        "model": subquery.c.model,
+        "input_tokens": subquery.c.input_tokens,
+        "output_tokens": subquery.c.output_tokens,
+        "cache_read_tokens": subquery.c.cache_read_tokens,
+        "cache_creation_tokens": subquery.c.cache_creation_tokens,
+        "total_token_usage": subquery.c.total_token_usage,
+        "request_count": subquery.c.request_count,
+        "total_cost_usd": subquery.c.total_cost_usd,
+    }
+    column = allowed.get(sort_by or "", subquery.c.request_count)
+    order_fn = asc if sort_order == "asc" else desc
+    return stmt.order_by(order_fn(column), asc(subquery.c.username), asc(subquery.c.model))
+
+
+async def _list_usage_stats(
+    session: AsyncSession,
+    *,
+    start_at: str | None = None,
+    end_at: str | None = None,
+    username: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
+) -> dict:
+    """分页返回 usage 聚合统计。"""
+    agg = _build_usage_stats_agg(start_at=start_at, end_at=end_at, username=username)
+    subquery = agg.subquery()
+
+    count_stmt = select(func.count()).select_from(subquery)
+    total = (await session.execute(count_stmt)).scalar() or 0
+
+    stmt = select(subquery)
+    stmt = _apply_usage_sort(stmt, subquery, sort_by=sort_by, sort_order=sort_order)
+    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+
+    rows = (await session.execute(stmt)).all()
+    data = [
+        UsageStatsItem(
+            username=row.username,
+            model=row.model,
+            input_tokens=int(row.input_tokens),
+            output_tokens=int(row.output_tokens),
+            cache_read_tokens=int(row.cache_read_tokens),
+            cache_creation_tokens=int(row.cache_creation_tokens),
+            total_token_usage=int(row.total_token_usage),
+            request_count=int(row.request_count),
+            total_cost_usd=float(row.total_cost_usd),
+        ).model_dump()
+        for row in rows
+    ]
+    return {
+        "data": data,
+        "total": int(total),
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+async def _export_usage_stats_csv(
+    session: AsyncSession,
+    *,
+    start_at: str | None = None,
+    end_at: str | None = None,
+    username: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
+    include_username: bool = True,
+) -> Response:
+    """导出 usage 聚合统计 CSV。"""
+    agg = _build_usage_stats_agg(start_at=start_at, end_at=end_at, username=username)
+    subquery = agg.subquery()
+
+    stmt = select(subquery)
+    stmt = _apply_usage_sort(stmt, subquery, sort_by=sort_by, sort_order=sort_order)
+    rows = (await session.execute(stmt)).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    header = [
+        "model",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+        "total_token_usage",
+        "request_count",
+        "total_cost_usd",
+    ]
+    if include_username:
+        header = ["username"] + header
+    writer.writerow(header)
+
+    for row in rows:
+        values = [
+            row.model or "",
+            int(row.input_tokens),
+            int(row.output_tokens),
+            int(row.cache_read_tokens),
+            int(row.cache_creation_tokens),
+            int(row.total_token_usage),
+            int(row.request_count),
+            float(row.total_cost_usd),
+        ]
+        if include_username:
+            values = [row.username or ""] + values
+        writer.writerow(values)
+
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="dashboard-usage.csv"'},
+    )
+
+
+def _build_model_stats_agg(start_at: str | None = None, end_at: str | None = None, username: str | None = None):
+    """构造按模型聚合的统计查询。"""
+    stmt = select(
+        UsageLog.model.label("model"),
+        func.count(UsageLog.id).label("request_count"),
+    )
+    stmt = _apply_stats_time_filters(stmt, start_at=start_at, end_at=end_at)
+    stmt = _apply_stats_username_filter(stmt, username=username)
+    return stmt.group_by(UsageLog.model)
+
+
+def _apply_model_sort(stmt, subquery, sort_by: str | None = None, sort_order: str | None = None):
+    """按白名单字段为模型统计结果排序。"""
+    allowed = {
+        "model": subquery.c.model,
+        "request_count": subquery.c.request_count,
+    }
+    column = allowed.get(sort_by or "", subquery.c.request_count)
+    order_fn = asc if sort_order == "asc" else desc
+    return stmt.order_by(order_fn(column), asc(subquery.c.model))
+
+
+async def _list_model_stats(
+    session: AsyncSession,
+    *,
+    start_at: str | None = None,
+    end_at: str | None = None,
+    username: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
+) -> dict:
+    """分页返回按模型聚合的统计结果。"""
+    agg = _build_model_stats_agg(start_at=start_at, end_at=end_at, username=username)
+    subquery = agg.subquery()
+
+    count_stmt = select(func.count()).select_from(subquery)
+    total = (await session.execute(count_stmt)).scalar() or 0
+
+    stmt = select(subquery)
+    stmt = _apply_model_sort(stmt, subquery, sort_by=sort_by, sort_order=sort_order)
+    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+    rows = (await session.execute(stmt)).all()
+
+    return {
+        "data": [
+            ModelStatsItem(model=row.model, request_count=int(row.request_count)).model_dump()
+            for row in rows
+        ],
+        "total": int(total),
+        "page": page,
+        "page_size": page_size,
+    }
+
+
 @admin_router.get("/stats/overview", summary="今日整体统计")
 async def stats_overview(
     session: AsyncSession = Depends(async_session_generator),
+    start_at: str | None = None,
+    end_at: str | None = None,
+    username: str | None = None,
 ) -> OverviewResponse:
-    """返回今日总费用（USD）和请求数。"""
-    today = _today_prefix()
+    """返回筛选范围内总费用（USD）、请求数和 Token 用量。"""
     stmt = select(
         func.coalesce(func.sum(UsageLog.cost_usd), 0).label("total_cost_usd"),
         func.coalesce(
@@ -878,7 +1153,10 @@ async def stats_overview(
             0,
         ).label("actual_cost_usd"),
         func.count(UsageLog.id).label("request_count"),
-    ).where(UsageLog.created_at.like(f"{today}%"))
+        func.coalesce(func.sum(_total_token_usage_expr()), 0).label("total_token_usage"),
+    )
+    stmt = _apply_stats_time_filters(stmt, start_at=start_at, end_at=end_at)
+    stmt = _apply_stats_username_filter(stmt, username=username)
 
     result = await session.execute(stmt)
     row = result.one()
@@ -886,7 +1164,51 @@ async def stats_overview(
         total_cost_usd=float(row.total_cost_usd),
         actual_cost_usd=float(row.actual_cost_usd),
         request_count=int(row.request_count),
-        date=today,
+        total_token_usage=int(row.total_token_usage),
+        date=_today_prefix(),
+    )
+
+
+@admin_router.get("/stats/usage", summary="按用户名和模型统计用量")
+async def stats_usage(
+    session: AsyncSession = Depends(async_session_generator),
+    start_at: str | None = None,
+    end_at: str | None = None,
+    username: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
+) -> dict:
+    return await _list_usage_stats(
+        session,
+        start_at=start_at,
+        end_at=end_at,
+        username=username,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+
+
+@admin_router.get("/stats/usage/export", summary="导出用量统计 CSV")
+async def stats_usage_export(
+    session: AsyncSession = Depends(async_session_generator),
+    start_at: str | None = None,
+    end_at: str | None = None,
+    username: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
+) -> Response:
+    return await _export_usage_stats_csv(
+        session,
+        start_at=start_at,
+        end_at=end_at,
+        username=username,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        include_username=True,
     )
 
 
@@ -927,28 +1249,25 @@ async def stats_tokens(
 @admin_router.get("/stats/models", summary="Top 10 模型请求量")
 async def stats_models(
     session: AsyncSession = Depends(async_session_generator),
-) -> list[ModelStatsItem]:
-    """返回今日请求数 Top 10 的模型（按 request_count 降序）。"""
-    today = _today_prefix()
-    stmt = (
-        select(
-            UsageLog.model,
-            func.count(UsageLog.id).label("request_count"),
-        )
-        .where(UsageLog.created_at.like(f"{today}%"))
-        .group_by(UsageLog.model)
-        .order_by(func.count(UsageLog.id).desc())
-        .limit(10)
+    start_at: str | None = None,
+    end_at: str | None = None,
+    username: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
+) -> dict:
+    """返回按模型聚合的分页请求统计。"""
+    return await _list_model_stats(
+        session,
+        start_at=start_at,
+        end_at=end_at,
+        username=username,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
-    result = await session.execute(stmt)
-    rows = result.all()
-    return [
-        ModelStatsItem(
-            model=row.model,
-            request_count=int(row.request_count),
-        )
-        for row in rows
-    ]
 
 
 # ---------------------------------------------------------------------------

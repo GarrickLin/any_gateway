@@ -37,6 +37,18 @@ async def override_session():
         yield session
 
 
+async def _seed_usage_logs(rows):
+    """插入 UsageLog 测试数据。"""
+    from db.models import UsageLog
+
+    async with AsyncSession(TEST_ENGINE, expire_on_commit=False) as session:
+        session.add_all([
+            row if isinstance(row, UsageLog) else UsageLog(**row)
+            for row in rows
+        ])
+        await session.commit()
+
+
 # 导入 app 和相关模块
 from db.database import init_db
 from gateway import app
@@ -166,6 +178,100 @@ def test_user_stats_overview_actual_cost_usd(client):
     assert "actual_cost_usd" in data
 
 
+def test_admin_stats_overview_respects_range_username_and_total_token_usage(client):
+    """admin stats/overview 应支持时间范围、用户名过滤，并返回 total_token_usage。"""
+    import asyncio
+
+    asyncio.run(_seed_usage_logs([
+        {
+            "username": "overview-admin-alice",
+            "model": "gpt-4o",
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "cache_read_tokens": 20,
+            "cache_creation_tokens": 10,
+            "cost_usd": 1.25,
+            "covered_by_package": False,
+            "created_at": "2026-03-20T01:00:00Z",
+        },
+        {
+            "username": "overview-admin-bob",
+            "model": "gpt-4o-mini",
+            "input_tokens": 999,
+            "output_tokens": 1,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cost_usd": 9.99,
+            "covered_by_package": True,
+            "created_at": "2026-03-18T01:00:00Z",
+        },
+    ]))
+
+    resp = client.get(
+        "/admin/stats/overview",
+        params={
+            "start_at": "2026-03-20T00:00:00Z",
+            "end_at": "2026-03-20T23:59:59Z",
+            "username": "overview-admin-alice",
+        },
+        headers={"x-admin-key": "test-admin-secret"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["request_count"] == 1
+    assert data["total_cost_usd"] == 1.25
+    assert data["actual_cost_usd"] == 1.25
+    assert data["total_token_usage"] == 180
+
+
+def test_user_stats_overview_is_scoped_to_current_user_even_with_query_params(client):
+    """user stats/overview 始终只能统计当前用户。"""
+    import asyncio
+    from services.auth_service import create_access_token
+
+    asyncio.run(_seed_usage_logs([
+        {
+            "username": "overview-user-alice",
+            "model": "claude-sonnet",
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "cache_read_tokens": 5,
+            "cache_creation_tokens": 1,
+            "cost_usd": 0.5,
+            "covered_by_package": False,
+            "created_at": "2026-03-20T03:00:00Z",
+        },
+        {
+            "username": "overview-user-bob",
+            "model": "claude-sonnet",
+            "input_tokens": 1000,
+            "output_tokens": 1000,
+            "cache_read_tokens": 1000,
+            "cache_creation_tokens": 1000,
+            "cost_usd": 99.0,
+            "covered_by_package": False,
+            "created_at": "2026-03-20T04:00:00Z",
+        },
+    ]))
+
+    token = create_access_token("overview-user-alice", "user")
+    resp = client.get(
+        "/user/stats/overview",
+        params={
+            "start_at": "2026-03-20T00:00:00Z",
+            "end_at": "2026-03-20T23:59:59Z",
+            "username": "overview-user-bob",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["request_count"] == 1
+    assert data["total_cost_usd"] == 0.5
+    assert data["actual_cost_usd"] == 0.5
+    assert data["total_token_usage"] == 36
+
+
 # ---------------------------------------------------------------------------
 # 4. stats/tokens 结构检查
 # ---------------------------------------------------------------------------
@@ -186,14 +292,234 @@ def test_stats_tokens_structure(client):
 # ---------------------------------------------------------------------------
 
 def test_stats_models_structure(client):
-    """stats/models 应返回列表"""
+    """stats/models 应返回分页结构。"""
     resp = client.get(
         "/admin/stats/models",
         headers={"x-admin-key": "test-admin-secret"},
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert isinstance(data, list)
+    assert set(data.keys()) == {"data", "total", "page", "page_size"}
+    assert isinstance(data["data"], list)
+
+
+def test_admin_stats_models_supports_pagination_sort_and_username_filter(client):
+    """admin stats/models 应支持时间范围、用户名过滤、分页和排序。"""
+    import asyncio
+
+    asyncio.run(_seed_usage_logs([
+        {
+            "username": "models-admin-alice",
+            "model": "gpt-4o",
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "cost_usd": 0.1,
+            "created_at": "2026-03-20T11:00:00Z",
+        },
+        {
+            "username": "models-admin-alice",
+            "model": "gpt-4o",
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "cost_usd": 0.1,
+            "created_at": "2026-03-20T11:10:00Z",
+        },
+        {
+            "username": "models-admin-alice",
+            "model": "gpt-4o-mini",
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "cost_usd": 0.1,
+            "created_at": "2026-03-20T11:20:00Z",
+        },
+        {
+            "username": "models-admin-bob",
+            "model": "claude-sonnet",
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "cost_usd": 0.1,
+            "created_at": "2026-03-20T11:30:00Z",
+        },
+    ]))
+
+    resp = client.get(
+        "/admin/stats/models",
+        params={
+            "start_at": "2026-03-20T00:00:00Z",
+            "end_at": "2026-03-20T23:59:59Z",
+            "username": "models-admin-alice",
+            "sort_by": "request_count",
+            "sort_order": "desc",
+            "page": 1,
+            "page_size": 10,
+        },
+        headers={"x-admin-key": "test-admin-secret"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 2
+    assert body["page"] == 1
+    assert body["page_size"] == 10
+    assert body["data"][0] == {"model": "gpt-4o", "request_count": 2}
+    assert body["data"][1] == {"model": "gpt-4o-mini", "request_count": 1}
+
+
+# ---------------------------------------------------------------------------
+# 5.1 stats/usage & export 测试
+# ---------------------------------------------------------------------------
+
+def test_admin_stats_usage_groups_by_username_and_model(client):
+    """admin stats/usage 应按 用户名 + 模型 聚合，并支持分页排序。"""
+    import asyncio
+
+    asyncio.run(_seed_usage_logs([
+        {
+            "username": "usage-admin-alice",
+            "model": "gpt-4o",
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "cache_read_tokens": 5,
+            "cache_creation_tokens": 1,
+            "cost_usd": 1.2,
+            "covered_by_package": False,
+            "created_at": "2026-03-20T06:00:00Z",
+        },
+        {
+            "username": "usage-admin-alice",
+            "model": "gpt-4o",
+            "input_tokens": 30,
+            "output_tokens": 40,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cost_usd": 0.8,
+            "covered_by_package": False,
+            "created_at": "2026-03-20T06:30:00Z",
+        },
+        {
+            "username": "usage-admin-alice",
+            "model": "gpt-4o-mini",
+            "input_tokens": 10,
+            "output_tokens": 15,
+            "cache_read_tokens": 2,
+            "cache_creation_tokens": 3,
+            "cost_usd": 0.3,
+            "covered_by_package": True,
+            "created_at": "2026-03-20T07:00:00Z",
+        },
+    ]))
+
+    resp = client.get(
+        "/admin/stats/usage",
+        params={
+            "start_at": "2026-03-20T00:00:00Z",
+            "end_at": "2026-03-20T23:59:59Z",
+            "username": "usage-admin-alice",
+            "sort_by": "request_count",
+            "sort_order": "desc",
+            "page": 1,
+            "page_size": 20,
+        },
+        headers={"x-admin-key": "test-admin-secret"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 2
+    assert body["page"] == 1
+    assert body["page_size"] == 20
+
+    first = body["data"][0]
+    assert first["username"] == "usage-admin-alice"
+    assert first["model"] == "gpt-4o"
+    assert first["input_tokens"] == 130
+    assert first["output_tokens"] == 60
+    assert first["cache_read_tokens"] == 5
+    assert first["cache_creation_tokens"] == 1
+    assert first["total_token_usage"] == 196
+    assert first["request_count"] == 2
+    assert first["total_cost_usd"] == 2.0
+
+
+def test_user_stats_usage_only_returns_current_user(client):
+    """user stats/usage 应始终只返回当前用户的聚合结果。"""
+    import asyncio
+    from services.auth_service import create_access_token
+
+    asyncio.run(_seed_usage_logs([
+        {
+            "username": "usage-user-alice",
+            "model": "claude-sonnet",
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "cache_read_tokens": 1,
+            "cache_creation_tokens": 2,
+            "cost_usd": 0.4,
+            "covered_by_package": False,
+            "created_at": "2026-03-20T08:00:00Z",
+        },
+        {
+            "username": "usage-user-bob",
+            "model": "claude-opus",
+            "input_tokens": 999,
+            "output_tokens": 999,
+            "cache_read_tokens": 999,
+            "cache_creation_tokens": 999,
+            "cost_usd": 88.8,
+            "covered_by_package": False,
+            "created_at": "2026-03-20T09:00:00Z",
+        },
+    ]))
+
+    token = create_access_token("usage-user-alice", "user")
+    resp = client.get(
+        "/user/stats/usage",
+        params={
+            "start_at": "2026-03-20T00:00:00Z",
+            "end_at": "2026-03-20T23:59:59Z",
+            "sort_by": "request_count",
+            "sort_order": "desc",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    assert len(body["data"]) == 1
+    assert body["data"][0]["username"] == "usage-user-alice"
+    assert body["data"][0]["model"] == "claude-sonnet"
+
+
+def test_admin_stats_usage_export_returns_csv(client):
+    """admin stats/usage/export 应返回当前筛选结果的 CSV。"""
+    import asyncio
+
+    asyncio.run(_seed_usage_logs([
+        {
+            "username": "usage-export-alice",
+            "model": "gemini-2.0-flash",
+            "input_tokens": 12,
+            "output_tokens": 34,
+            "cache_read_tokens": 5,
+            "cache_creation_tokens": 6,
+            "cost_usd": 0.12,
+            "covered_by_package": False,
+            "created_at": "2026-03-20T10:00:00Z",
+        },
+    ]))
+
+    resp = client.get(
+        "/admin/stats/usage/export",
+        params={
+            "start_at": "2026-03-20T00:00:00Z",
+            "end_at": "2026-03-20T23:59:59Z",
+            "username": "usage-export-alice",
+        },
+        headers={"x-admin-key": "test-admin-secret"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/csv")
+    assert "attachment;" in resp.headers["content-disposition"]
+    assert "username,model,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,total_token_usage,request_count,total_cost_usd" in resp.text
+    assert "usage-export-alice,gemini-2.0-flash,12,34,5,6,57,1,0.12" in resp.text
 
 
 # ---------------------------------------------------------------------------
