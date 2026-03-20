@@ -94,8 +94,10 @@ const Dashboard: React.FC = () => {
     }
     try {
       const statusRes = await getMyStatus()
+      console.log('myStatus data:', statusRes.data)
       setMyStatus(statusRes.data)
-    } catch {
+    } catch (err) {
+      console.error('Failed to load my status:', err)
       // Redis 不可用或未登录时静默处理
     }
   }, [isAdmin])
@@ -126,17 +128,7 @@ const Dashboard: React.FC = () => {
 
   const maxModelCount = models[0]?.request_count ?? 1
 
-  const formatQuota = (quota: number | null): string => {
-    if (quota === null) return 'NaN'
-    if (quota === 0) return '余额已耗尽'
-    return `$${quota.toFixed(2)}`
-  }
 
-  const quotaColor = (quota: number | null): string => {
-    if (quota === null) return 'inherit'
-    if (quota === 0) return 'rgb(var(--red-6))'
-    return 'rgb(var(--green-6))'
-  }
 
   const adminTokenColumns = [
     { title: '用户名', dataIndex: 'username', render: (v: string) => v ?? '—' },
@@ -230,33 +222,6 @@ const Dashboard: React.FC = () => {
               />
             </Card>
           </Col>
-          <Col flex={1}>
-            <Card style={{ height: '100%' }}>
-              <Statistic
-                title="账户余额"
-                value={meData ? formatQuota(meData.quota_usd) : '—'}
-                style={{ color: meData ? quotaColor(meData.quota_usd) : 'inherit' }}
-              />
-              <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
-                <Input
-                  size="small"
-                  placeholder="输入券码充值"
-                  value={voucherCode}
-                  onChange={(v) => { setVoucherCode(v); setVoucherError('') }}
-                  style={{ flex: 1 }}
-                  onPressEnter={handleRedeem}
-                />
-                <Button size="small" type="primary" loading={redeeming} onClick={handleRedeem}>
-                  兑换
-                </Button>
-              </div>
-              {voucherError && (
-                <div style={{ marginTop: 4, fontSize: 12, color: 'rgb(var(--red-6))' }}>
-                  {voucherError}
-                </div>
-              )}
-            </Card>
-          </Col>
         </Row>
 
         {/* Top 10 表格 */}
@@ -290,18 +255,18 @@ const Dashboard: React.FC = () => {
         {/* 用户余额 Card */}
         {myStatus && (
           <Card style={{ marginTop: 24 }} title="账户余额">
-            <Row gutter={24}>
-              <Col span={8}>
+            <Row gutter={24} align="center">
+              <Col span={6}>
                 <Statistic
                   title="总额度"
                   value={myStatus.quota_usd != null ? myStatus.quota_usd : '无限'}
                   suffix={myStatus.quota_usd != null ? ' USD' : ''}
                 />
               </Col>
-              <Col span={8}>
+              <Col span={6}>
                 <Statistic title="已消费" value={myStatus.used_usd?.toFixed(4)} suffix=" USD" />
               </Col>
-              <Col span={8}>
+              <Col span={6}>
                 <Statistic
                   title="剩余"
                   value={myStatus.quota_usd != null
@@ -310,12 +275,32 @@ const Dashboard: React.FC = () => {
                   suffix={myStatus.quota_usd != null ? ' USD' : ''}
                 />
               </Col>
+              <Col span={6}>
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  <Input
+                    size="small"
+                    placeholder="输入券码充值"
+                    value={voucherCode}
+                    onChange={(v) => { setVoucherCode(v); setVoucherError('') }}
+                    style={{ flex: 1 }}
+                    onPressEnter={handleRedeem}
+                  />
+                  <Button size="small" type="primary" loading={redeeming} onClick={handleRedeem}>
+                    兑换
+                  </Button>
+                </div>
+                {voucherError && (
+                  <div style={{ marginTop: 4, fontSize: 12, color: 'rgb(var(--red-6))' }}>
+                    {voucherError}
+                  </div>
+                )}
+              </Col>
             </Row>
           </Card>
         )}
 
         {/* 分组限流状态 Card */}
-        {myStatus?.groups?.length > 0 && (
+        {myStatus && myStatus.groups && myStatus.groups.length > 0 && (
           <Card style={{ marginTop: 16 }} title="分组限流状态">
             <Table
               rowKey="rule_id"
@@ -350,15 +335,12 @@ const Dashboard: React.FC = () => {
                   title: '剩余',
                   dataIndex: 'remaining_pct',
                   render: (v: number) => (
-                    <Space size="small">
-                      <Progress
-                        percent={v}
-                        size="small"
-                        style={{ width: 80 }}
-                        status={v < 20 ? 'error' : v < 50 ? 'warning' : 'normal'}
-                      />
-                      <span>{v.toFixed(1)}%</span>
-                    </Space>
+                    <Progress
+                      percent={v}
+                      size="small"
+                      style={{ width: 100 }}
+                      status={v < 20 ? 'error' : v < 50 ? 'warning' : 'normal'}
+                    />
                   )
                 },
               ]}

@@ -6,6 +6,7 @@ data/
 docs/prds/
 docs/plans/
 docs/misc/
+docs/issues/
 micro_gateway
 
 __pycache__/
@@ -15,3 +16,4 @@ pyrightconfig.json
 # 环境变量文件（含密钥，切勿提交）
 .env
 
+AGENTS.md

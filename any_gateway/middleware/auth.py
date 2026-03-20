@@ -148,7 +148,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if path in self.AUTH_OPTIONAL_KEY_PATHS:
-            api_key = self._extract_dedicated_key(request.headers)
+            api_key = self._extract_key(request.headers)
             if api_key:
                 token, error_msg, status_code = await self._validate_key(api_key)
                 if token is None:

@@ -216,7 +216,7 @@ async def get_my_status(
 ) -> dict:
     import os
     import redis.asyncio as aioredis
-    from db.models import User, RateLimit
+    from db.models import User, UserGroup, RateLimit
     from services.auth_service import get_visible_groups
     from services.rate_limit_redis import build_key, get_window_count, get_window_sum
 
@@ -228,8 +228,15 @@ async def get_my_status(
     quota_usd = db_user.get("quota_usd") if db_user else 0
     used_usd = db_user.get("used_usd", 0) if db_user else 0
 
-    # 2. 获取所有可见分组
-    groups = await get_visible_groups(username, session)
+    # 2. 获取分组：管理员看全部分组，普通用户只看可见分组
+    role = user.get("role", "user")
+    if role in ("admin", "superadmin"):
+        result = await session.execute(
+            select(UserGroup).order_by(UserGroup.priority.desc())
+        )
+        groups = result.scalars().all()
+    else:
+        groups = await get_visible_groups(username, session)
 
     # 3. 尝试连接 Redis（不可用时 fail open）
     redis_client = None
@@ -492,13 +499,14 @@ async def redeem_voucher(
     return {"ok": True, "amount_usd": voucher.amount_usd, "new_quota_usd": user.quota_usd}
 
 
-@user_router.get("/groups", summary="列出所有可用分组（供 Token 绑定选择）")
+@user_router.get("/groups", summary="列出当前用户可见分组（供 Token 绑定选择）")
 async def list_groups_for_user(
     session: AsyncSession = Depends(async_session_generator),
+    current_user: dict = Depends(require_auth),
 ) -> list[dict]:
-    """返回所有分组的 id 和 name，供创建/编辑 Token 时选择绑定分组。"""
-    result = await session.execute(select(UserGroup).order_by(UserGroup.name.asc()))
-    groups = result.scalars().all()
+    """返回当前用户可见的分组（显式 membership + all_visible），供创建/编辑 Token 时选择绑定分组。"""
+    from services.auth_service import get_visible_groups
+    groups = await get_visible_groups(current_user["username"], session)
     return [{"id": g.id, "name": g.name} for g in groups]
 
 

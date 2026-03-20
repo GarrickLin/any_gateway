@@ -327,11 +327,11 @@ def test_update_token_group_id(client, user_jwt_headers):
 
 
 def test_user_can_list_groups(client):
-    """普通用户（JWT）应能访问 /user/groups 列出所有分组。"""
+    """普通用户（JWT）应能访问 /user/groups 列出可见分组（all_visible=True 或有 membership）。"""
     admin_headers = {"x-admin-key": "test-admin-secret"}
 
-    # 先创建一个分组
-    client.post("/admin/groups", json={"name": "test-visible-group"}, headers=admin_headers)
+    # 先创建一个 all_visible 分组（普通用户无需 membership 即可看到）
+    client.post("/admin/groups", json={"name": "test-visible-group", "all_visible": True}, headers=admin_headers)
 
     # 使用 JWT（通过 create_access_token 直接生成 user 角色 JWT）
     from services.auth_service import create_access_token
