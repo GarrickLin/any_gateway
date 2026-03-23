@@ -602,7 +602,7 @@ const Dashboard: React.FC = () => {
           </Card>
         )}
 
-        {myStatus && myStatus.groups && myStatus.groups.length > 0 && (
+        {myStatus && (
           <Card style={{ marginTop: 16 }} title="分组限流状态">
             <Table
               rowKey="rule_id"
@@ -614,6 +614,7 @@ const Dashboard: React.FC = () => {
                   is_all_visible: group.is_all_visible,
                 })),
               )}
+              noDataElement={<span style={{ color: '#999' }}>暂无分组限流规则</span>}
               columns={[
                 {
                   title: '分组',
