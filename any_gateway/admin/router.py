@@ -84,7 +84,7 @@ async def require_admin_access(
 
     # 方式二：JWT Bearer token
     if authorization.startswith("Bearer "):
-        token_str = authorization[len("Bearer "):]
+        token_str = authorization[len("Bearer ") :]
         try:
             payload = verify_token(token_str)
         except JWTError:
@@ -92,7 +92,9 @@ async def require_admin_access(
         role = payload.get("role", "user")
         if role in ("admin", "superadmin"):
             return
-        raise HTTPException(status_code=403, detail="Permission denied: 需要 admin 或 superadmin 角色")
+        raise HTTPException(
+            status_code=403, detail="Permission denied: 需要 admin 或 superadmin 角色"
+        )
 
     raise HTTPException(status_code=403, detail="需要 x-admin-key 或有效的 Admin JWT")
 
@@ -206,6 +208,7 @@ async def admin_login(
     # 懒加载：首次登录时创建 User 并加入 default 分组（fallback 用户跳过）
     if not is_fallback:
         from services.auth_service import lazy_create_user
+
         await lazy_create_user(body.username, session)
         await session.commit()
 
@@ -263,31 +266,45 @@ async def get_my_status(
             key = build_key(group.id, rule["limit_type"], rule["window_sec"], username)
             try:
                 if rule["limit_type"] == "request_limit":
-                    current = await get_window_count(redis_client, key, rule["window_sec"]) if redis_client else 0
+                    current = (
+                        await get_window_count(redis_client, key, rule["window_sec"])
+                        if redis_client
+                        else 0
+                    )
                 else:
-                    current = await get_window_sum(redis_client, key, rule["window_sec"]) if redis_client else 0
+                    current = (
+                        await get_window_sum(redis_client, key, rule["window_sec"])
+                        if redis_client
+                        else 0
+                    )
             except Exception:
                 current = 0
             limit = rule["value"]
-            remaining_pct = max(0.0, (limit - current) / limit * 100) if limit > 0 else 0.0
-            rules_status.append({
-                "rule_id": rule["id"],
-                "limit_type": rule["limit_type"],
-                "window_sec": rule["window_sec"],
-                "limit": limit,
-                "current": current,
-                "remaining_pct": round(remaining_pct, 1),
-            })
+            remaining_pct = (
+                max(0.0, (limit - current) / limit * 100) if limit > 0 else 0.0
+            )
+            rules_status.append(
+                {
+                    "rule_id": rule["id"],
+                    "limit_type": rule["limit_type"],
+                    "window_sec": rule["window_sec"],
+                    "limit": limit,
+                    "current": current,
+                    "remaining_pct": round(remaining_pct, 1),
+                }
+            )
 
         if not rules_status:
             continue  # 无有效规则的分组不展示
 
-        groups_status.append({
-            "group_id": group.id,
-            "group_name": group.name,
-            "is_all_visible": group.all_visible,
-            "rate_limits": rules_status,
-        })
+        groups_status.append(
+            {
+                "group_id": group.id,
+                "group_name": group.name,
+                "is_all_visible": group.all_visible,
+                "rate_limits": rules_status,
+            }
+        )
 
     return {
         "quota_usd": quota_usd,
@@ -302,6 +319,7 @@ async def get_me(
     session: AsyncSession = Depends(async_session_generator),
 ) -> dict:
     from db.models import User
+
     crud = FastCRUD(User)
     db_user = await crud.get(session, username=user.get("username"))
     return {
@@ -369,13 +387,19 @@ async def list_my_tokens(
     current_user: dict = Depends(require_auth),
 ) -> dict:
     """仅返回当前登录用户自己创建的 Token。"""
-    stmt = select(Token).where(Token.username == current_user["username"]).order_by(Token.created_at.desc())
+    stmt = (
+        select(Token)
+        .where(Token.username == current_user["username"])
+        .order_by(Token.created_at.desc())
+    )
     result = await session.execute(stmt)
     tokens = list(result.scalars().all())
     return {"data": [t.model_dump() for t in tokens], "total": len(tokens)}
 
 
-@user_router.post("/tokens", summary="创建 Token（返回含 key 的完整记录）", response_model=Token)
+@user_router.post(
+    "/tokens", summary="创建 Token（返回含 key 的完整记录）", response_model=Token
+)
 async def create_token(
     body: TokenCreate,
     session: AsyncSession = Depends(async_session_generator),
@@ -392,7 +416,9 @@ async def create_token(
     session.add(token)
     await session.commit()
     await session.refresh(token)
-    logger.info(f"Token [{token.name}] 已创建，id={token.id}，用户：{current_user['username']}")
+    logger.info(
+        f"Token [{token.name}] 已创建，id={token.id}，用户：{current_user['username']}"
+    )
     return token
 
 
@@ -407,7 +433,10 @@ async def delete_my_token(
     token = await crud.get(session, id=token_id)
     if token is None:
         raise HTTPException(status_code=404, detail="Token not found")
-    if token["username"] != current_user["username"] and current_user["role"] not in ("admin", "superadmin"):
+    if token["username"] != current_user["username"] and current_user["role"] not in (
+        "admin",
+        "superadmin",
+    ):
         raise HTTPException(status_code=403, detail="无权删除他人的 Token")
     await crud.db_delete(session, id=token_id)
     logger.info(f"Token {token_id} 已删除，操作者：{current_user['username']}")
@@ -438,7 +467,10 @@ async def freeze_token(
     token = await crud.get(session, id=token_id)
     if token is None:
         raise HTTPException(status_code=404, detail="Token not found")
-    if token["username"] != current_user["username"] and current_user["role"] not in ("admin", "superadmin"):
+    if token["username"] != current_user["username"] and current_user["role"] not in (
+        "admin",
+        "superadmin",
+    ):
         raise HTTPException(status_code=403, detail="无权操作他人的 Token")
 
     # 更新冻结状态
@@ -447,7 +479,9 @@ async def freeze_token(
     updated = await crud.get(session, id=token_id)
     if updated is None:
         raise HTTPException(status_code=500, detail="Failed to retrieve updated token")
-    logger.info(f"Token {token_id} frozen={body.frozen}，操作者：{current_user['username']}")
+    logger.info(
+        f"Token {token_id} frozen={body.frozen}，操作者：{current_user['username']}"
+    )
     return updated
 
 
@@ -484,7 +518,9 @@ async def redeem_voucher(
     from db.models import Voucher, User
 
     result = await session.execute(
-        select(Voucher).where(Voucher.code == body.code, Voucher.used == False)  # noqa: E712
+        select(Voucher).where(
+            Voucher.code == body.code, Voucher.used == False
+        )  # noqa: E712
     )
     voucher = result.scalar_one_or_none()
     if voucher is None:
@@ -513,7 +549,11 @@ async def redeem_voucher(
 
     await session.commit()
     logger.info(f"用户 {username} 兑换消费券，充值 ${voucher.amount_usd}")
-    return {"ok": True, "amount_usd": voucher.amount_usd, "new_quota_usd": user.quota_usd}
+    return {
+        "ok": True,
+        "amount_usd": voucher.amount_usd,
+        "new_quota_usd": user.quota_usd,
+    }
 
 
 @user_router.get("/groups", summary="列出当前用户可见分组（供 Token 绑定选择）")
@@ -523,6 +563,7 @@ async def list_groups_for_user(
 ) -> list[dict]:
     """返回当前用户可见的分组（显式 membership + all_visible），供创建/编辑 Token 时选择绑定分组。"""
     from services.auth_service import get_visible_groups
+
     groups = await get_visible_groups(current_user["username"], session)
     return [{"id": g.id, "name": g.name} for g in groups]
 
@@ -551,7 +592,6 @@ async def list_my_logs(
     )
 
 
-
 @user_router.get("/stats/overview", summary="今日整体统计（当前用户）")
 async def user_stats_overview(
     session: AsyncSession = Depends(async_session_generator),
@@ -563,11 +603,15 @@ async def user_stats_overview(
     stmt = select(
         func.coalesce(func.sum(UsageLog.cost_usd), 0).label("total_cost_usd"),
         func.coalesce(
-            func.sum(UsageLog.cost_usd).filter(UsageLog.covered_by_package == False),  # noqa: E712
+            func.sum(UsageLog.cost_usd).filter(
+                UsageLog.covered_by_package == False
+            ),  # noqa: E712
             0,
         ).label("actual_cost_usd"),
         func.count(UsageLog.id).label("request_count"),
-        func.coalesce(func.sum(_total_token_usage_expr()), 0).label("total_token_usage"),
+        func.coalesce(func.sum(_total_token_usage_expr()), 0).label(
+            "total_token_usage"
+        ),
     )
     stmt = _apply_stats_time_filters(stmt, start_at=start_at, end_at=end_at)
     stmt = _apply_stats_username_filter(stmt, username=current_user["username"])
@@ -747,7 +791,9 @@ async def fetch_channel_models(
             resp.raise_for_status()
             data = resp.json()
 
-        logger.info(f"fetch-models 响应 keys={list(data.keys()) if isinstance(data, dict) else type(data)}")
+        logger.info(
+            f"fetch-models 响应 keys={list(data.keys()) if isinstance(data, dict) else type(data)}"
+        )
 
         # 支持 OpenAI 格式（data 字段）和其他格式
         if "data" in data:
@@ -772,13 +818,22 @@ async def fetch_channel_models(
                     continue
                 model_id = (m.get("name") or "").removeprefix("models/")
                 if model_id:
-                    normalized.append({"id": model_id, "object": "model", "created": 0, "owned_by": "gemini"})
+                    normalized.append(
+                        {
+                            "id": model_id,
+                            "object": "model",
+                            "created": 0,
+                            "owned_by": "gemini",
+                        }
+                    )
             models = normalized
 
         # 截断过大的模型列表
         MAX_MODELS = 100000
         if len(models) > MAX_MODELS:
-            logger.warning(f"Channel {channel_id} 返回 {len(models)} 个模型，截断至 {MAX_MODELS}")
+            logger.warning(
+                f"Channel {channel_id} 返回 {len(models)} 个模型，截断至 {MAX_MODELS}"
+            )
             models = models[:MAX_MODELS]
 
         logger.info(f"fetch-models 保存 {len(models)} 个模型到 channel={channel_id}")
@@ -792,7 +847,9 @@ async def fetch_channel_models(
     except httpx.HTTPStatusError as e:
         body = e.response.text[:300]
         logger.error(f"fetch-models 上游错误 {e.response.status_code}: {body}")
-        raise HTTPException(status_code=502, detail=f"上游返回 {e.response.status_code}: {body}")
+        raise HTTPException(
+            status_code=502, detail=f"上游返回 {e.response.status_code}: {body}"
+        )
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"连接上游失败: {str(e)}")
 
@@ -832,10 +889,9 @@ async def _query_logs(
     username: str | None = None,
 ) -> dict:
     """日志查询核心逻辑，admin 和 user 端点共用。username 非空时限定到该用户。"""
-    stmt = (
-        select(UsageLog, Token.name.label("token_name"), Token.username.label("token_username"))
-        .outerjoin(Token, UsageLog.token_id == Token.id)
-    )
+    stmt = select(
+        UsageLog, Token.name.label("token_name"), Token.username.label("token_username")
+    ).outerjoin(Token, UsageLog.token_id == Token.id)
 
     if model:
         stmt = stmt.where(UsageLog.model == model)
@@ -861,7 +917,11 @@ async def _query_logs(
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = (await session.execute(count_stmt)).scalar() or 0
 
-    stmt = stmt.order_by(UsageLog.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    stmt = (
+        stmt.order_by(UsageLog.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
     rows = (await session.execute(stmt)).all()
 
     return {
@@ -964,7 +1024,9 @@ def _total_token_usage_expr():
     )
 
 
-def _apply_stats_time_filters(stmt, start_at: str | None = None, end_at: str | None = None):
+def _apply_stats_time_filters(
+    stmt, start_at: str | None = None, end_at: str | None = None
+):
     """统计接口时间过滤；未指定范围时保持旧行为，仅统计今日。"""
     if start_at or end_at:
         if start_at:
@@ -1007,7 +1069,12 @@ def _aggregate_usage_rows(rows, timezone_obj: ZoneInfo) -> list[dict[str, Any]]:
     """按本地日期 + 用户名 + 模型聚合 usage 明细行。"""
     buckets: dict[tuple[str, str | None, str | None], dict[str, Any]] = {}
     for row in rows:
-        local_date = _parse_usage_created_at(row.created_at).astimezone(timezone_obj).date().isoformat()
+        local_date = (
+            _parse_usage_created_at(row.created_at)
+            .astimezone(timezone_obj)
+            .date()
+            .isoformat()
+        )
         key = (local_date, row.username, row.model)
         bucket = buckets.setdefault(
             key,
@@ -1032,8 +1099,11 @@ def _aggregate_usage_rows(rows, timezone_obj: ZoneInfo) -> list[dict[str, Any]]:
     return list(buckets.values())
 
 
-def _compare_usage_rows(left: dict[str, Any], right: dict[str, Any], sort_by: str, sort_order: str) -> int:
+def _compare_usage_rows(
+    left: dict[str, Any], right: dict[str, Any], sort_by: str, sort_order: str
+) -> int:
     """usage 聚合结果比较器：主排序字段可升降序，次级保持 username/model 升序。"""
+
     def _value(item: dict[str, Any], field: str):
         value = item.get(field)
         return "" if value is None else value
@@ -1056,7 +1126,11 @@ def _compare_usage_rows(left: dict[str, Any], right: dict[str, Any], sort_by: st
     return _compare_values(_value(left, "date"), _value(right, "date"))
 
 
-def _sort_usage_rows(rows: list[dict[str, Any]], sort_by: str | None = None, sort_order: str | None = None) -> list[dict[str, Any]]:
+def _sort_usage_rows(
+    rows: list[dict[str, Any]],
+    sort_by: str | None = None,
+    sort_order: str | None = None,
+) -> list[dict[str, Any]]:
     """按白名单字段为 usage 聚合结果排序。"""
     allowed = {
         "date",
@@ -1075,7 +1149,11 @@ def _sort_usage_rows(rows: list[dict[str, Any]], sort_by: str | None = None, sor
     sort_direction = sort_order or "desc"
     return sorted(
         rows,
-        key=cmp_to_key(lambda left, right: _compare_usage_rows(left, right, sort_key, sort_direction)),
+        key=cmp_to_key(
+            lambda left, right: _compare_usage_rows(
+                left, right, sort_key, sort_direction
+            )
+        ),
     )
 
 
@@ -1093,7 +1171,9 @@ async def _load_usage_stats(
         effective_start_at, effective_end_at = start_at, end_at
     else:
         effective_start_at, effective_end_at = _build_usage_default_window(tz)
-    stmt = _build_usage_rows_stmt(start_at=effective_start_at, end_at=effective_end_at, username=username)
+    stmt = _build_usage_rows_stmt(
+        start_at=effective_start_at, end_at=effective_end_at, username=username
+    )
     rows = (await session.execute(stmt)).all()
     return _aggregate_usage_rows(rows, tz)
 
@@ -1120,11 +1200,8 @@ async def _list_usage_stats(
     )
     rows = _sort_usage_rows(rows, sort_by=sort_by, sort_order=sort_order)
     total = len(rows)
-    rows = rows[(page - 1) * page_size: (page - 1) * page_size + page_size]
-    data = [
-        UsageStatsItem(**row).model_dump()
-        for row in rows
-    ]
+    rows = rows[(page - 1) * page_size : (page - 1) * page_size + page_size]
+    data = [UsageStatsItem(**row).model_dump() for row in rows]
     return {
         "data": data,
         "total": total,
@@ -1192,7 +1269,9 @@ async def _export_usage_stats_csv(
     )
 
 
-def _build_model_stats_agg(start_at: str | None = None, end_at: str | None = None, username: str | None = None):
+def _build_model_stats_agg(
+    start_at: str | None = None, end_at: str | None = None, username: str | None = None
+):
     """构造按模型聚合的统计查询。"""
     stmt = select(
         UsageLog.model.label("model"),
@@ -1203,7 +1282,9 @@ def _build_model_stats_agg(start_at: str | None = None, end_at: str | None = Non
     return stmt.group_by(UsageLog.model)
 
 
-def _apply_model_sort(stmt, subquery, sort_by: str | None = None, sort_order: str | None = None):
+def _apply_model_sort(
+    stmt, subquery, sort_by: str | None = None, sort_order: str | None = None
+):
     """按白名单字段为模型统计结果排序。"""
     allowed = {
         "model": subquery.c.model,
@@ -1239,7 +1320,9 @@ async def _list_model_stats(
 
     return {
         "data": [
-            ModelStatsItem(model=row.model, request_count=int(row.request_count)).model_dump()
+            ModelStatsItem(
+                model=row.model, request_count=int(row.request_count)
+            ).model_dump()
             for row in rows
         ],
         "total": int(total),
@@ -1259,11 +1342,15 @@ async def stats_overview(
     stmt = select(
         func.coalesce(func.sum(UsageLog.cost_usd), 0).label("total_cost_usd"),
         func.coalesce(
-            func.sum(UsageLog.cost_usd).filter(UsageLog.covered_by_package == False),  # noqa: E712
+            func.sum(UsageLog.cost_usd).filter(
+                UsageLog.covered_by_package == False
+            ),  # noqa: E712
             0,
         ).label("actual_cost_usd"),
         func.count(UsageLog.id).label("request_count"),
-        func.coalesce(func.sum(_total_token_usage_expr()), 0).label("total_token_usage"),
+        func.coalesce(func.sum(_total_token_usage_expr()), 0).label(
+            "total_token_usage"
+        ),
     )
     stmt = _apply_stats_time_filters(stmt, start_at=start_at, end_at=end_at)
     stmt = _apply_stats_username_filter(stmt, username=username)
@@ -1420,7 +1507,9 @@ async def promote_user(
     - 不在表中 → 插入新记录（created_by 为当前登录用户）。
     """
     if body.role not in ("admin", "superadmin"):
-        raise HTTPException(status_code=422, detail="role 必须为 'admin' 或 'superadmin'")
+        raise HTTPException(
+            status_code=422, detail="role 必须为 'admin' 或 'superadmin'"
+        )
 
     stmt = select(AdminUser).where(AdminUser.username == body.username)
     result = await session.execute(stmt)
@@ -1431,7 +1520,9 @@ async def promote_user(
         session.add(existing)
         await session.commit()
         await session.refresh(existing)
-        logger.info(f"用户 [{body.username}] 角色更新为 [{body.role}]，操作者：{current_user['username']}")
+        logger.info(
+            f"用户 [{body.username}] 角色更新为 [{body.role}]，操作者：{current_user['username']}"
+        )
         return existing
     else:
         new_user = AdminUser(
@@ -1442,7 +1533,9 @@ async def promote_user(
         session.add(new_user)
         await session.commit()
         await session.refresh(new_user)
-        logger.info(f"用户 [{body.username}] 已提权为 [{body.role}]，操作者：{current_user['username']}")
+        logger.info(
+            f"用户 [{body.username}] 已提权为 [{body.role}]，操作者：{current_user['username']}"
+        )
         return new_user
 
 
@@ -1465,11 +1558,15 @@ async def demote_user(
     existing = result.scalar_one_or_none()
 
     if existing is None:
-        raise HTTPException(status_code=404, detail=f"用户 [{username}] 不存在于 admin_users 表")
+        raise HTTPException(
+            status_code=404, detail=f"用户 [{username}] 不存在于 admin_users 表"
+        )
 
     await session.delete(existing)
     await session.commit()
-    logger.info(f"用户 [{username}] 已从 admin_users 删除，操作者：{current_user['username']}")
+    logger.info(
+        f"用户 [{username}] 已从 admin_users 删除，操作者：{current_user['username']}"
+    )
     return {"ok": True}
 
 
@@ -1484,13 +1581,16 @@ group_channel_router = APIRouter(
 )
 
 
-@group_channel_router.post("/{group_id}/channels/{channel_id}", summary="将渠道加入分组")
+@group_channel_router.post(
+    "/{group_id}/channels/{channel_id}", summary="将渠道加入分组"
+)
 async def add_channel_to_group(
     group_id: str,
     channel_id: str,
     session: AsyncSession = Depends(async_session_generator),
 ) -> dict:
     from db.models import GroupChannel, UserGroup, Channel
+
     # 验证分组和渠道存在
     if await session.get(UserGroup, group_id) is None:
         raise HTTPException(status_code=404, detail=f"分组 {group_id} 不存在")
@@ -1514,6 +1614,7 @@ async def list_group_channels(
     session: AsyncSession = Depends(async_session_generator),
 ) -> list:
     from db.models import GroupChannel, Channel
+
     result = await session.execute(
         select(Channel)
         .join(GroupChannel, Channel.id == GroupChannel.channel_id)
@@ -1533,13 +1634,16 @@ async def list_group_channels(
     ]
 
 
-@group_channel_router.delete("/{group_id}/channels/{channel_id}", summary="从分组移除渠道")
+@group_channel_router.delete(
+    "/{group_id}/channels/{channel_id}", summary="从分组移除渠道"
+)
 async def remove_channel_from_group(
     group_id: str,
     channel_id: str,
     session: AsyncSession = Depends(async_session_generator),
 ) -> dict:
     from db.models import GroupChannel
+
     result = await session.execute(
         select(GroupChannel).where(
             GroupChannel.group_id == group_id,
@@ -1570,6 +1674,7 @@ async def list_ad_users(
     session: AsyncSession = Depends(async_session_generator),
 ) -> list:
     from db.models import User
+
     result = await session.execute(select(User))
     users = result.scalars().all()
     return [{"username": u.username, "created_at": u.created_at} for u in users]
@@ -1581,6 +1686,7 @@ async def get_user_groups_for_user(
     session: AsyncSession = Depends(async_session_generator),
 ) -> list:
     from services.auth_service import get_visible_groups
+
     groups = await get_visible_groups(username, session)
     return [
         {
@@ -1600,6 +1706,7 @@ async def add_user_to_group(
     session: AsyncSession = Depends(async_session_generator),
 ) -> dict:
     from db.models import User, UserGroupMembership, UserGroup
+
     # 验证分组存在
     if await session.get(UserGroup, group_id) is None:
         raise HTTPException(status_code=404, detail=f"分组 {group_id} 不存在")
@@ -1626,6 +1733,7 @@ async def remove_user_from_group(
     session: AsyncSession = Depends(async_session_generator),
 ) -> dict:
     from db.models import UserGroupMembership
+
     result = await session.execute(
         select(UserGroupMembership).where(
             UserGroupMembership.username == username,
@@ -1666,6 +1774,7 @@ async def list_rate_limits(
     result = await crud.get_multi(session, group_id=group_id)
     return result
 
+
 model_price_router: APIRouter = crud_router(
     session=async_session_generator,
     model=ModelPrice,
@@ -1705,14 +1814,19 @@ voucher_router: APIRouter = crud_router(
     tags=["Admin: Vouchers"],
     create_deps=_common_deps,
     read_deps=_common_deps,
-    deleted_methods=["create", "read_multi"],  # 手动实现：create 需返回 code，read_multi 按 created_at 倒序
+    deleted_methods=[
+        "create",
+        "read_multi",
+    ],  # 手动实现：create 需返回 code，read_multi 按 created_at 倒序
     update_deps=_common_deps,
     delete_deps=_common_deps,
     db_delete_deps=_common_deps,
 )
 
 
-@voucher_router.post("/admin/vouchers", tags=["Admin: Vouchers"], summary="创建消费券", status_code=201)
+@voucher_router.post(
+    "/admin/vouchers", tags=["Admin: Vouchers"], summary="创建消费券", status_code=201
+)
 async def create_voucher(
     body: VoucherCreate,
     session: AsyncSession = Depends(async_session_generator),
@@ -1732,7 +1846,9 @@ async def create_voucher(
     return {"count": count, "vouchers": [v.model_dump() for v in vouchers]}
 
 
-@voucher_router.get("/admin/vouchers", tags=["Admin: Vouchers"], summary="列出消费券（按创建时间倒序）")
+@voucher_router.get(
+    "/admin/vouchers", tags=["Admin: Vouchers"], summary="列出消费券（按创建时间倒序）"
+)
 async def list_vouchers(
     session: AsyncSession = Depends(async_session_generator),
     _: None = Depends(require_admin_access),
@@ -1741,7 +1857,12 @@ async def list_vouchers(
 ) -> dict:
     """列出所有消费券，按创建时间降序排列（最新的在前）。"""
     offset = (page - 1) * items_per_page
-    stmt = select(Voucher).order_by(Voucher.created_at.desc()).offset(offset).limit(items_per_page)
+    stmt = (
+        select(Voucher)
+        .order_by(Voucher.created_at.desc())
+        .offset(offset)
+        .limit(items_per_page)
+    )
     result = await session.execute(stmt)
     vouchers = list(result.scalars().all())
     count_result = await session.execute(select(func.count()).select_from(Voucher))
