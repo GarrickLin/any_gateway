@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlmodel import SQLModel
@@ -42,6 +43,7 @@ async def _seed_usage_logs(rows):
     from db.models import UsageLog
 
     async with AsyncSession(TEST_ENGINE, expire_on_commit=False) as session:
+        await session.execute(delete(UsageLog))
         session.add_all([
             row if isinstance(row, UsageLog) else UsageLog(**row)
             for row in rows
@@ -369,7 +371,7 @@ def test_admin_stats_models_supports_pagination_sort_and_username_filter(client)
 # ---------------------------------------------------------------------------
 
 def test_admin_stats_usage_groups_by_username_and_model(client):
-    """admin stats/usage 应按 用户名 + 模型 聚合，并支持分页排序。"""
+    """admin stats/usage 应按日期 + 用户名 + 模型聚合，并支持分页排序。"""
     import asyncio
 
     asyncio.run(_seed_usage_logs([
@@ -414,6 +416,7 @@ def test_admin_stats_usage_groups_by_username_and_model(client):
             "start_at": "2026-03-20T00:00:00Z",
             "end_at": "2026-03-20T23:59:59Z",
             "username": "usage-admin-alice",
+            "timezone": "UTC",
             "sort_by": "request_count",
             "sort_order": "desc",
             "page": 1,
@@ -434,13 +437,13 @@ def test_admin_stats_usage_groups_by_username_and_model(client):
     assert first["output_tokens"] == 60
     assert first["cache_read_tokens"] == 5
     assert first["cache_creation_tokens"] == 1
-    assert first["total_token_usage"] == 196
+    assert first["date"] == "2026-03-20"
     assert first["request_count"] == 2
     assert first["total_cost_usd"] == 2.0
 
 
 def test_user_stats_usage_only_returns_current_user(client):
-    """user stats/usage 应始终只返回当前用户的聚合结果。"""
+    """user stats/usage 应始终只返回当前用户的日期聚合结果。"""
     import asyncio
     from services.auth_service import create_access_token
 
@@ -475,6 +478,7 @@ def test_user_stats_usage_only_returns_current_user(client):
         params={
             "start_at": "2026-03-20T00:00:00Z",
             "end_at": "2026-03-20T23:59:59Z",
+            "timezone": "UTC",
             "sort_by": "request_count",
             "sort_order": "desc",
         },
@@ -485,6 +489,187 @@ def test_user_stats_usage_only_returns_current_user(client):
     assert body["total"] == 1
     assert len(body["data"]) == 1
     assert body["data"][0]["username"] == "usage-user-alice"
+    assert body["data"][0]["date"] == "2026-03-20"
+    assert body["data"][0]["model"] == "claude-sonnet"
+
+
+def test_admin_stats_usage_groups_by_local_date_username_and_model(client):
+    """admin stats/usage 应按本地日期 + 用户名 + 模型聚合，并移除 total_token_usage。"""
+    import asyncio
+
+    asyncio.run(_seed_usage_logs([
+        {
+            "username": "usage-admin-alice",
+            "model": "gpt-4o",
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "cache_read_tokens": 1,
+            "cache_creation_tokens": 0,
+            "cost_usd": 0.1,
+            "created_at": "2026-03-20T15:30:00Z",
+        },
+        {
+            "username": "usage-admin-alice",
+            "model": "gpt-4o",
+            "input_tokens": 20,
+            "output_tokens": 7,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 2,
+            "cost_usd": 0.2,
+            "created_at": "2026-03-20T16:30:00Z",
+        },
+    ]))
+
+    resp = client.get(
+        "/admin/stats/usage",
+        params={
+            "start_at": "2026-03-20T00:00:00Z",
+            "end_at": "2026-03-21T00:00:00Z",
+            "username": "usage-admin-alice",
+            "timezone": "Asia/Shanghai",
+            "sort_by": "date",
+            "sort_order": "desc",
+        },
+        headers={"x-admin-key": "test-admin-secret"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 2
+    assert body["data"][0]["date"] == "2026-03-21"
+    assert body["data"][1]["date"] == "2026-03-20"
+    assert "total_token_usage" not in body["data"][0]
+
+
+def test_admin_stats_usage_default_usage_window_uses_timezone_local_today(client):
+    """未传 start_at/end_at 时，usage 默认窗口应按 timezone 的本地今天。"""
+    import asyncio
+    from datetime import datetime, time, timezone as dt_timezone
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("Asia/Shanghai")
+    now_utc = datetime.now(dt_timezone.utc)
+    local_today = now_utc.astimezone(tz).date()
+    # 选一个一定落在本地今天、但不落在 UTC 今天的时间点。
+    local_time = time(0, 30) if local_today == now_utc.date() else time(23, 30)
+    created_at = datetime.combine(local_today, local_time, tzinfo=tz).astimezone(dt_timezone.utc).isoformat().replace("+00:00", "Z")
+
+    asyncio.run(_seed_usage_logs([
+        {
+            "username": "usage-default-alice",
+            "model": "gpt-4o",
+            "input_tokens": 7,
+            "output_tokens": 8,
+            "cache_read_tokens": 1,
+            "cache_creation_tokens": 2,
+            "cost_usd": 0.3,
+            "created_at": created_at,
+        },
+    ]))
+
+    resp = client.get(
+        "/admin/stats/usage",
+        params={
+            "timezone": "Asia/Shanghai",
+        },
+        headers={"x-admin-key": "test-admin-secret"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    assert len(body["data"]) == 1
+    assert body["data"][0]["username"] == "usage-default-alice"
+    assert body["data"][0]["date"] == local_today.isoformat()
+
+
+def test_admin_stats_usage_defaults_to_date_desc_when_sort_not_provided(client):
+    """未传 sort_by/sort_order 时，usage 默认应按 date desc 排序。"""
+    import asyncio
+
+    asyncio.run(_seed_usage_logs([
+        {
+            "username": "usage-sort-alice",
+            "model": "gpt-4o",
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "cache_read_tokens": 1,
+            "cache_creation_tokens": 0,
+            "cost_usd": 0.1,
+            "created_at": "2026-03-20T15:30:00Z",
+        },
+        {
+            "username": "usage-sort-alice",
+            "model": "gpt-4o",
+            "input_tokens": 20,
+            "output_tokens": 7,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 2,
+            "cost_usd": 0.2,
+            "created_at": "2026-03-20T16:30:00Z",
+        },
+    ]))
+
+    resp = client.get(
+        "/admin/stats/usage",
+        params={
+            "start_at": "2026-03-20T00:00:00Z",
+            "end_at": "2026-03-21T00:00:00Z",
+            "username": "usage-sort-alice",
+            "timezone": "Asia/Shanghai",
+        },
+        headers={"x-admin-key": "test-admin-secret"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 2
+    assert [item["date"] for item in body["data"]] == ["2026-03-21", "2026-03-20"]
+
+
+def test_user_stats_usage_only_returns_current_user_and_date_groups(client):
+    """user stats/usage 应只返回当前用户，并按日期分组。"""
+    import asyncio
+    from services.auth_service import create_access_token
+
+    asyncio.run(_seed_usage_logs([
+        {
+            "username": "usage-user-alice",
+            "model": "claude-sonnet",
+            "input_tokens": 3,
+            "output_tokens": 4,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cost_usd": 0.05,
+            "created_at": "2026-03-20T08:00:00Z",
+        },
+        {
+            "username": "usage-user-bob",
+            "model": "claude-opus",
+            "input_tokens": 999,
+            "output_tokens": 999,
+            "cache_read_tokens": 999,
+            "cache_creation_tokens": 999,
+            "cost_usd": 88.8,
+            "created_at": "2026-03-20T09:00:00Z",
+        },
+    ]))
+
+    token = create_access_token("usage-user-alice", "user")
+    resp = client.get(
+        "/user/stats/usage",
+        params={
+            "start_at": "2026-03-20T00:00:00Z",
+            "end_at": "2026-03-20T23:59:59Z",
+            "timezone": "UTC",
+            "sort_by": "date",
+            "sort_order": "desc",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    assert len(body["data"]) == 1
+    assert body["data"][0]["username"] == "usage-user-alice"
+    assert body["data"][0]["date"] == "2026-03-20"
     assert body["data"][0]["model"] == "claude-sonnet"
 
 
@@ -512,14 +697,77 @@ def test_admin_stats_usage_export_returns_csv(client):
             "start_at": "2026-03-20T00:00:00Z",
             "end_at": "2026-03-20T23:59:59Z",
             "username": "usage-export-alice",
+            "timezone": "UTC",
         },
         headers={"x-admin-key": "test-admin-secret"},
     )
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/csv")
     assert "attachment;" in resp.headers["content-disposition"]
-    assert "username,model,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,total_token_usage,request_count,total_cost_usd" in resp.text
-    assert "usage-export-alice,gemini-2.0-flash,12,34,5,6,57,1,0.12" in resp.text
+    assert "date,username,model,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,request_count,total_cost_usd" in resp.text
+    assert "2026-03-20,usage-export-alice,gemini-2.0-flash,12,34,5,6,1,0.12" in resp.text
+
+
+def test_user_stats_usage_export_omits_username_column(client):
+    """user stats/usage/export 导出的 CSV 不应包含 username 列。"""
+    import asyncio
+    from services.auth_service import create_access_token
+
+    asyncio.run(_seed_usage_logs([
+        {
+            "username": "usage-user-export",
+            "model": "gpt-4o-mini",
+            "input_tokens": 11,
+            "output_tokens": 22,
+            "cache_read_tokens": 3,
+            "cache_creation_tokens": 4,
+            "cost_usd": 0.33,
+            "created_at": "2026-03-20T12:00:00Z",
+        },
+    ]))
+
+    token = create_access_token("usage-user-export", "user")
+    resp = client.get(
+        "/user/stats/usage/export",
+        params={
+            "start_at": "2026-03-20T00:00:00Z",
+            "end_at": "2026-03-20T23:59:59Z",
+            "timezone": "UTC",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    first_line = resp.text.splitlines()[0]
+    assert first_line == "date,model,input_tokens,output_tokens,cache_read_tokens,cache_creation_tokens,request_count,total_cost_usd"
+    second_line = resp.text.splitlines()[1]
+    assert second_line == "2026-03-20,gpt-4o-mini,11,22,3,4,1,0.33"
+
+
+def test_admin_stats_usage_rejects_invalid_timezone(client):
+    """admin stats/usage 遇到非法 timezone 时应返回 422。"""
+    resp = client.get(
+        "/admin/stats/usage",
+        params={
+            "start_at": "2026-03-20T00:00:00Z",
+            "end_at": "2026-03-20T23:59:59Z",
+            "timezone": "Mars/Olympus",
+        },
+        headers={"x-admin-key": "test-admin-secret"},
+    )
+    assert resp.status_code == 422
+
+
+def test_stats_usage_summaries_reflect_date_username_and_model_semantics(client):
+    """usage 路由 summary 应明确体现日期、用户名和模型语义。"""
+    openapi = app.openapi()
+    user_summary = openapi["paths"]["/user/stats/usage"]["get"]["summary"]
+    admin_summary = openapi["paths"]["/admin/stats/usage"]["get"]["summary"]
+    assert "日期" in user_summary
+    assert "模型" in user_summary
+    assert "当前用户" in user_summary
+    assert "日期" in admin_summary
+    assert "用户名" in admin_summary
+    assert "模型" in admin_summary
 
 
 # ---------------------------------------------------------------------------

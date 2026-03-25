@@ -16,6 +16,7 @@ export interface DashboardStatsFilter {
   start_at?: string
   end_at?: string
   username?: string
+  timezone?: string
   page?: number
   page_size?: number
   sort_by?: string
@@ -31,13 +32,13 @@ export interface StatsOverviewResponse {
 }
 
 export interface UsageStatsItem {
+  date: string
   username: string | null
   model: string | null
   input_tokens: number
   output_tokens: number
   cache_read_tokens: number
   cache_creation_tokens: number
-  total_token_usage: number
   request_count: number
   total_cost_usd: number
 }

@@ -11,8 +11,10 @@ import csv
 import io
 import json
 import os
-from datetime import datetime, timezone
+from functools import cmp_to_key
+from datetime import datetime, time, timezone
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
@@ -336,13 +338,13 @@ class ModelStatsItem(BaseModel):
 
 
 class UsageStatsItem(BaseModel):
+    date: str
     username: str | None
     model: str | None
     input_tokens: int
     output_tokens: int
     cache_read_tokens: int
     cache_creation_tokens: int
-    total_token_usage: int
     request_count: int
     total_cost_usd: float
 
@@ -580,19 +582,21 @@ async def user_stats_overview(
     )
 
 
-@user_router.get("/stats/usage", summary="按模型统计当前用户用量")
+@user_router.get("/stats/usage", summary="按日期和模型统计当前用户用量")
 async def user_stats_usage(
     session: AsyncSession = Depends(async_session_generator),
     current_user: dict = Depends(require_auth),
     start_at: str | None = None,
     end_at: str | None = None,
+    timezone: str | None = None,
     page: int = 1,
     page_size: int = 20,
-    sort_by: str | None = None,
-    sort_order: str | None = None,
+    sort_by: str = "date",
+    sort_order: str = "desc",
 ) -> dict:
     return await _list_usage_stats(
         session,
+        timezone_name=timezone,
         start_at=start_at,
         end_at=end_at,
         username=current_user["username"],
@@ -609,11 +613,13 @@ async def user_stats_usage_export(
     current_user: dict = Depends(require_auth),
     start_at: str | None = None,
     end_at: str | None = None,
-    sort_by: str | None = None,
-    sort_order: str | None = None,
+    timezone: str | None = None,
+    sort_by: str = "date",
+    sort_order: str = "desc",
 ) -> Response:
     return await _export_usage_stats_csv(
         session,
+        timezone_name=timezone,
         start_at=start_at,
         end_at=end_at,
         username=current_user["username"],
@@ -917,6 +923,38 @@ def _today_prefix() -> str:
     return datetime.now(timezone.utc).date().isoformat()  # e.g. "2026-03-04"
 
 
+def _get_usage_timezone(timezone_name: str | None) -> ZoneInfo:
+    """解析 usage 统计使用的时区，非法值返回 422。"""
+    try:
+        return ZoneInfo(timezone_name or "UTC")
+    except ZoneInfoNotFoundError as exc:
+        raise HTTPException(status_code=422, detail="Invalid timezone") from exc
+
+
+def _parse_usage_created_at(value: str | datetime) -> datetime:
+    """解析 UsageLog.created_at，兼容带 Z 的 UTC 字符串。"""
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _to_utc_z_iso(dt: datetime) -> str:
+    """把带时区的 datetime 格式化成 UTC Z 字符串。"""
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _build_usage_default_window(timezone_obj: ZoneInfo) -> tuple[str, str]:
+    """按客户端时区计算默认的“今天” UTC 过滤窗口。"""
+    local_today = datetime.now(timezone_obj).date()
+    start_local = datetime.combine(local_today, time.min, tzinfo=timezone_obj)
+    end_local = datetime.combine(local_today, time(23, 59, 59), tzinfo=timezone_obj)
+    return _to_utc_z_iso(start_local), _to_utc_z_iso(end_local)
+
+
 def _total_token_usage_expr():
     """总 Token 用量 = input + output + cache read + cache write。"""
     return (
@@ -945,82 +983,152 @@ def _apply_stats_username_filter(stmt, username: str | None = None):
     return stmt
 
 
-def _build_usage_stats_agg(start_at: str | None = None, end_at: str | None = None, username: str | None = None):
-    """构造按 用户名 + 模型 聚合的 usage 统计查询。"""
+def _build_usage_rows_stmt(
+    start_at: str | None = None,
+    end_at: str | None = None,
+    username: str | None = None,
+):
+    """构造 usage 明细查询，保留 SQL 层时间与用户名过滤。"""
     stmt = select(
-        UsageLog.username.label("username"),
-        UsageLog.model.label("model"),
-        func.coalesce(func.sum(UsageLog.input_tokens), 0).label("input_tokens"),
-        func.coalesce(func.sum(UsageLog.output_tokens), 0).label("output_tokens"),
-        func.coalesce(func.sum(UsageLog.cache_read_tokens), 0).label("cache_read_tokens"),
-        func.coalesce(func.sum(UsageLog.cache_creation_tokens), 0).label("cache_creation_tokens"),
-        func.coalesce(func.sum(_total_token_usage_expr()), 0).label("total_token_usage"),
-        func.count(UsageLog.id).label("request_count"),
-        func.coalesce(func.sum(UsageLog.cost_usd), 0).label("total_cost_usd"),
+        UsageLog.created_at,
+        UsageLog.username,
+        UsageLog.model,
+        UsageLog.input_tokens,
+        UsageLog.output_tokens,
+        UsageLog.cache_read_tokens,
+        UsageLog.cache_creation_tokens,
+        UsageLog.cost_usd,
     )
     stmt = _apply_stats_time_filters(stmt, start_at=start_at, end_at=end_at)
     stmt = _apply_stats_username_filter(stmt, username=username)
-    return stmt.group_by(UsageLog.username, UsageLog.model)
+    return stmt
 
 
-def _apply_usage_sort(stmt, subquery, sort_by: str | None = None, sort_order: str | None = None):
+def _aggregate_usage_rows(rows, timezone_obj: ZoneInfo) -> list[dict[str, Any]]:
+    """按本地日期 + 用户名 + 模型聚合 usage 明细行。"""
+    buckets: dict[tuple[str, str | None, str | None], dict[str, Any]] = {}
+    for row in rows:
+        local_date = _parse_usage_created_at(row.created_at).astimezone(timezone_obj).date().isoformat()
+        key = (local_date, row.username, row.model)
+        bucket = buckets.setdefault(
+            key,
+            {
+                "date": local_date,
+                "username": row.username,
+                "model": row.model,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_creation_tokens": 0,
+                "request_count": 0,
+                "total_cost_usd": 0.0,
+            },
+        )
+        bucket["input_tokens"] += int(row.input_tokens or 0)
+        bucket["output_tokens"] += int(row.output_tokens or 0)
+        bucket["cache_read_tokens"] += int(row.cache_read_tokens or 0)
+        bucket["cache_creation_tokens"] += int(row.cache_creation_tokens or 0)
+        bucket["request_count"] += 1
+        bucket["total_cost_usd"] += float(row.cost_usd or 0)
+    return list(buckets.values())
+
+
+def _compare_usage_rows(left: dict[str, Any], right: dict[str, Any], sort_by: str, sort_order: str) -> int:
+    """usage 聚合结果比较器：主排序字段可升降序，次级保持 username/model 升序。"""
+    def _value(item: dict[str, Any], field: str):
+        value = item.get(field)
+        return "" if value is None else value
+
+    def _compare_values(a, b) -> int:
+        return (a > b) - (a < b)
+
+    primary_cmp = _compare_values(_value(left, sort_by), _value(right, sort_by))
+    if primary_cmp:
+        return primary_cmp if sort_order == "asc" else -primary_cmp
+
+    username_cmp = _compare_values(_value(left, "username"), _value(right, "username"))
+    if username_cmp:
+        return username_cmp
+
+    model_cmp = _compare_values(_value(left, "model"), _value(right, "model"))
+    if model_cmp:
+        return model_cmp
+
+    return _compare_values(_value(left, "date"), _value(right, "date"))
+
+
+def _sort_usage_rows(rows: list[dict[str, Any]], sort_by: str | None = None, sort_order: str | None = None) -> list[dict[str, Any]]:
     """按白名单字段为 usage 聚合结果排序。"""
     allowed = {
-        "username": subquery.c.username,
-        "model": subquery.c.model,
-        "input_tokens": subquery.c.input_tokens,
-        "output_tokens": subquery.c.output_tokens,
-        "cache_read_tokens": subquery.c.cache_read_tokens,
-        "cache_creation_tokens": subquery.c.cache_creation_tokens,
-        "total_token_usage": subquery.c.total_token_usage,
-        "request_count": subquery.c.request_count,
-        "total_cost_usd": subquery.c.total_cost_usd,
+        "date",
+        "username",
+        "model",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+        "request_count",
+        "total_cost_usd",
     }
-    column = allowed.get(sort_by or "", subquery.c.request_count)
-    order_fn = asc if sort_order == "asc" else desc
-    return stmt.order_by(order_fn(column), asc(subquery.c.username), asc(subquery.c.model))
+    sort_key = sort_by or "date"
+    if sort_key not in allowed:
+        sort_key = "date"
+    sort_direction = sort_order or "desc"
+    return sorted(
+        rows,
+        key=cmp_to_key(lambda left, right: _compare_usage_rows(left, right, sort_key, sort_direction)),
+    )
+
+
+async def _load_usage_stats(
+    session: AsyncSession,
+    *,
+    timezone_name: str | None = None,
+    start_at: str | None = None,
+    end_at: str | None = None,
+    username: str | None = None,
+) -> list[dict[str, Any]]:
+    """查询并按客户端时区聚合 usage 数据。"""
+    tz = _get_usage_timezone(timezone_name)
+    if start_at or end_at:
+        effective_start_at, effective_end_at = start_at, end_at
+    else:
+        effective_start_at, effective_end_at = _build_usage_default_window(tz)
+    stmt = _build_usage_rows_stmt(start_at=effective_start_at, end_at=effective_end_at, username=username)
+    rows = (await session.execute(stmt)).all()
+    return _aggregate_usage_rows(rows, tz)
 
 
 async def _list_usage_stats(
     session: AsyncSession,
     *,
+    timezone_name: str | None = None,
     start_at: str | None = None,
     end_at: str | None = None,
     username: str | None = None,
     page: int = 1,
     page_size: int = 20,
-    sort_by: str | None = None,
-    sort_order: str | None = None,
+    sort_by: str = "date",
+    sort_order: str = "desc",
 ) -> dict:
     """分页返回 usage 聚合统计。"""
-    agg = _build_usage_stats_agg(start_at=start_at, end_at=end_at, username=username)
-    subquery = agg.subquery()
-
-    count_stmt = select(func.count()).select_from(subquery)
-    total = (await session.execute(count_stmt)).scalar() or 0
-
-    stmt = select(subquery)
-    stmt = _apply_usage_sort(stmt, subquery, sort_by=sort_by, sort_order=sort_order)
-    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
-
-    rows = (await session.execute(stmt)).all()
+    rows = await _load_usage_stats(
+        session,
+        timezone_name=timezone_name,
+        start_at=start_at,
+        end_at=end_at,
+        username=username,
+    )
+    rows = _sort_usage_rows(rows, sort_by=sort_by, sort_order=sort_order)
+    total = len(rows)
+    rows = rows[(page - 1) * page_size: (page - 1) * page_size + page_size]
     data = [
-        UsageStatsItem(
-            username=row.username,
-            model=row.model,
-            input_tokens=int(row.input_tokens),
-            output_tokens=int(row.output_tokens),
-            cache_read_tokens=int(row.cache_read_tokens),
-            cache_creation_tokens=int(row.cache_creation_tokens),
-            total_token_usage=int(row.total_token_usage),
-            request_count=int(row.request_count),
-            total_cost_usd=float(row.total_cost_usd),
-        ).model_dump()
+        UsageStatsItem(**row).model_dump()
         for row in rows
     ]
     return {
         "data": data,
-        "total": int(total),
+        "total": total,
         "page": page,
         "page_size": page_size,
     }
@@ -1029,50 +1137,53 @@ async def _list_usage_stats(
 async def _export_usage_stats_csv(
     session: AsyncSession,
     *,
+    timezone_name: str | None = None,
     start_at: str | None = None,
     end_at: str | None = None,
     username: str | None = None,
-    sort_by: str | None = None,
-    sort_order: str | None = None,
+    sort_by: str = "date",
+    sort_order: str = "desc",
     include_username: bool = True,
 ) -> Response:
     """导出 usage 聚合统计 CSV。"""
-    agg = _build_usage_stats_agg(start_at=start_at, end_at=end_at, username=username)
-    subquery = agg.subquery()
-
-    stmt = select(subquery)
-    stmt = _apply_usage_sort(stmt, subquery, sort_by=sort_by, sort_order=sort_order)
-    rows = (await session.execute(stmt)).all()
+    rows = await _load_usage_stats(
+        session,
+        timezone_name=timezone_name,
+        start_at=start_at,
+        end_at=end_at,
+        username=username,
+    )
+    rows = _sort_usage_rows(rows, sort_by=sort_by, sort_order=sort_order)
 
     output = io.StringIO()
     writer = csv.writer(output)
     header = [
+        "date",
         "model",
         "input_tokens",
         "output_tokens",
         "cache_read_tokens",
         "cache_creation_tokens",
-        "total_token_usage",
         "request_count",
         "total_cost_usd",
     ]
     if include_username:
-        header = ["username"] + header
+        header = ["date", "username"] + header[1:]
     writer.writerow(header)
 
     for row in rows:
         values = [
-            row.model or "",
-            int(row.input_tokens),
-            int(row.output_tokens),
-            int(row.cache_read_tokens),
-            int(row.cache_creation_tokens),
-            int(row.total_token_usage),
-            int(row.request_count),
-            float(row.total_cost_usd),
+            row["date"],
+            row["model"] or "",
+            int(row["input_tokens"]),
+            int(row["output_tokens"]),
+            int(row["cache_read_tokens"]),
+            int(row["cache_creation_tokens"]),
+            int(row["request_count"]),
+            float(row["total_cost_usd"]),
         ]
         if include_username:
-            values = [row.username or ""] + values
+            values = [row["date"], row["username"] or ""] + values[1:]
         writer.writerow(values)
 
     return Response(
@@ -1169,19 +1280,21 @@ async def stats_overview(
     )
 
 
-@admin_router.get("/stats/usage", summary="按用户名和模型统计用量")
+@admin_router.get("/stats/usage", summary="按日期、用户名和模型统计用量")
 async def stats_usage(
     session: AsyncSession = Depends(async_session_generator),
     start_at: str | None = None,
     end_at: str | None = None,
     username: str | None = None,
+    timezone: str | None = None,
     page: int = 1,
     page_size: int = 20,
-    sort_by: str | None = None,
-    sort_order: str | None = None,
+    sort_by: str = "date",
+    sort_order: str = "desc",
 ) -> dict:
     return await _list_usage_stats(
         session,
+        timezone_name=timezone,
         start_at=start_at,
         end_at=end_at,
         username=username,
@@ -1198,11 +1311,13 @@ async def stats_usage_export(
     start_at: str | None = None,
     end_at: str | None = None,
     username: str | None = None,
-    sort_by: str | None = None,
-    sort_order: str | None = None,
+    timezone: str | None = None,
+    sort_by: str = "date",
+    sort_order: str = "desc",
 ) -> Response:
     return await _export_usage_stats_csv(
         session,
+        timezone_name=timezone,
         start_at=start_at,
         end_at=end_at,
         username=username,

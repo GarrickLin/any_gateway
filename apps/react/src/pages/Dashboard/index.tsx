@@ -110,7 +110,7 @@ const INITIAL_USAGE_TABLE: TableState = {
   current: 1,
   pageSize: 20,
   total: 0,
-  sortBy: 'request_count',
+  sortBy: 'date',
   sortOrder: 'desc',
 }
 
@@ -129,6 +129,7 @@ const toUtcRange = (startDate: string, endDate: string) => ({
 
 const buildStatsParams = (filters: DashboardFilters, isAdmin: boolean) => ({
   ...toUtcRange(filters.startDate, filters.endDate),
+  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   ...(isAdmin && filters.username ? { username: filters.username } : {}),
 })
 
@@ -323,7 +324,11 @@ const Dashboard: React.FC = () => {
   const handleExport = async () => {
     setExporting(true)
     try {
-      const params = buildStatsParams(appliedFilters, isAdmin)
+      const params = {
+        ...buildStatsParams(appliedFilters, isAdmin),
+        sort_by: usageSortBy,
+        sort_order: usageSortOrder,
+      }
       const res = isAdmin ? await exportStatsUsage(params) : await exportMyStatsUsage(params)
       const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8;' })
       const url = window.URL.createObjectURL(blob)
@@ -363,6 +368,12 @@ const Dashboard: React.FC = () => {
   }
 
   const usageColumns = [
+    {
+      title: '日期',
+      dataIndex: 'date',
+      sorter: true,
+      sortOrder: usageTable.sortBy === 'date' ? toArcoSortOrder(usageTable.sortOrder) : undefined,
+    },
     ...(isAdmin
       ? [{
           title: '用户名',
@@ -402,12 +413,6 @@ const Dashboard: React.FC = () => {
       dataIndex: 'cache_creation_tokens',
       sorter: true,
       sortOrder: usageTable.sortBy === 'cache_creation_tokens' ? toArcoSortOrder(usageTable.sortOrder) : undefined,
-    },
-    {
-      title: '总 Token 用量',
-      dataIndex: 'total_token_usage',
-      sorter: true,
-      sortOrder: usageTable.sortBy === 'total_token_usage' ? toArcoSortOrder(usageTable.sortOrder) : undefined,
     },
     {
       title: '请求数',
@@ -527,7 +532,7 @@ const Dashboard: React.FC = () => {
 
         <Card title="用量统计表" style={{ marginBottom: 16 }}>
           <Table
-            rowKey={(record) => `${record.username ?? 'self'}:${record.model ?? 'unknown'}`}
+            rowKey={(record) => `${record.date}:${record.username ?? 'self'}:${record.model ?? 'unknown'}`}
             columns={usageColumns}
             data={usageRows}
             onChange={handleUsageTableChange}
