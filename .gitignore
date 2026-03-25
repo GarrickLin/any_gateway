@@ -17,5 +17,6 @@ pyrightconfig.json
 .env
 
 AGENTS.md
+CLAUDE.md
 
 .superpowers
