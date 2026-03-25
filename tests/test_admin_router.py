@@ -1024,6 +1024,61 @@ def test_models_filtered_by_token_group(client):
     assert "model-only-in-b" not in model_ids
 
 
+def test_fetch_channel_models_keeps_more_than_500_models(client):
+    """fetch-models 不应把 600 个上游模型截断为 500 个。"""
+    from unittest.mock import patch
+
+    admin_headers = {"x-admin-key": "test-admin-secret"}
+
+    client.post(
+        "/admin/channels",
+        json={
+            "name": "fetch-models-large-list",
+            "provider": "openai",
+            "base_url": "https://example.com/v1",
+            "api_key": "fake-key",
+            "enabled": True,
+            "weight": 1,
+        },
+        headers=admin_headers,
+    )
+    channels_resp = client.get("/admin/channels", headers=admin_headers).json()
+    channel = next(c for c in channels_resp["data"] if c["name"] == "fetch-models-large-list")
+
+    fake_models = [{"id": f"model-{i}", "object": "model"} for i in range(600)]
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": fake_models}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, headers=None):
+            return FakeResponse()
+
+    with patch("admin.router.httpx.AsyncClient", FakeAsyncClient):
+        res = client.post(
+            f"/admin/channels/{channel['id']}/fetch-models",
+            headers=admin_headers,
+        )
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["count"] == 600
+    assert len(body["models"]) == 600
+
+
 def test_group_all_visible_field(client):
     """UserGroup 应支持 all_visible 字段"""
     res = client.post(

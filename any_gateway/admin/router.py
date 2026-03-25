@@ -733,7 +733,6 @@ async def fetch_channel_models(
     if provider == "anthropic":
         headers = {
             "x-api-key": channel["api_key"],
-            "anthropic-version": "2023-06-01",
         }
     elif provider == "gemini":
         headers = {"x-goog-api-key": channel["api_key"]}
@@ -777,7 +776,7 @@ async def fetch_channel_models(
             models = normalized
 
         # 截断过大的模型列表
-        MAX_MODELS = 500
+        MAX_MODELS = 100000
         if len(models) > MAX_MODELS:
             logger.warning(f"Channel {channel_id} 返回 {len(models)} 个模型，截断至 {MAX_MODELS}")
             models = models[:MAX_MODELS]
