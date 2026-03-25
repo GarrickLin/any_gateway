@@ -219,7 +219,6 @@ const Chat: React.FC = () => {
       headers: {
         'x-api-key': selectedKey,
         'Content-Type': 'application/json',
-        'anthropic-version': ANTHROPIC_VERSION,
       },
       body: JSON.stringify({
         model: selectedModel,
