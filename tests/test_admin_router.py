@@ -1024,6 +1024,91 @@ def test_models_filtered_by_token_group(client):
     assert "model-only-in-b" not in model_ids
 
 
+def test_bound_group_token_works_immediately_after_channel_update(client):
+    """更新 channel 后，已绑定 group 的 API Key 无需重新选择 group 也应立即生效。"""
+    import json as _json
+
+    from gateway import find_backend_for_model
+
+    admin_headers = {"x-admin-key": "test-admin-secret"}
+
+    client.post("/admin/groups", json={"name": "channel-update-group"}, headers=admin_headers)
+    groups_resp = client.get("/admin/groups", headers=admin_headers).json()
+    grp = next(g for g in groups_resp["data"] if g["name"] == "channel-update-group")
+
+    client.post(
+        "/admin/channels",
+        json={
+            "name": "channel-update-target",
+            "provider": "openai",
+            "base_url": "http://old-upstream/v1",
+            "api_key": "old-key",
+            "models": _json.dumps(["old-model"]),
+            "model_mapping": _json.dumps({"old-alias": "old-model"}),
+            "enabled": True,
+            "weight": 1,
+        },
+        headers=admin_headers,
+    )
+    channels_resp = client.get("/admin/channels", headers=admin_headers).json()
+    channel = next(c for c in channels_resp["data"] if c["name"] == "channel-update-target")
+
+    client.post(f"/admin/groups/{grp['id']}/channels/{channel['id']}", headers=admin_headers)
+
+    login = client.post(
+        "/admin/auth/login",
+        json={"username": "_admin_fallback", "password": os.environ["ADMIN_FALLBACK_KEY"]},
+    )
+    jwt_token = login.json()["access_token"]
+    user_headers = {"Authorization": f"Bearer {jwt_token}"}
+    token = client.post(
+        "/user/tokens",
+        json={"name": "channel-update-token", "group_id": grp["id"]},
+        headers=user_headers,
+    ).json()
+    api_key = token["key"]
+
+    before = client.get("/v1/models", headers={"x-api-key": api_key})
+    assert before.status_code == 200
+    before_ids = {m["id"] for m in before.json()["data"]}
+    assert "old-model" in before_ids
+    assert "old-alias" in before_ids
+
+    route_before = asyncio.run(
+        find_backend_for_model("old-alias", username="_admin_fallback", group_id=grp["id"])
+    )
+    assert route_before is not None
+    assert route_before["base_url"] == "http://old-upstream/v1"
+    assert route_before["model"] == "old-model"
+
+    patch_res = client.patch(
+        f"/admin/channels/{channel['id']}",
+        json={
+            "base_url": "http://new-upstream/v1",
+            "api_key": "new-key",
+            "models": _json.dumps(["new-model"]),
+            "model_mapping": _json.dumps({"new-alias": "new-model"}),
+        },
+        headers=admin_headers,
+    )
+    assert patch_res.status_code == 200
+
+    after = client.get("/v1/models", headers={"x-api-key": api_key})
+    assert after.status_code == 200
+    after_ids = {m["id"] for m in after.json()["data"]}
+    assert "new-model" in after_ids
+    assert "new-alias" in after_ids
+    assert "old-model" not in after_ids
+    assert "old-alias" not in after_ids
+
+    route_after = asyncio.run(
+        find_backend_for_model("new-alias", username="_admin_fallback", group_id=grp["id"])
+    )
+    assert route_after is not None
+    assert route_after["base_url"] == "http://new-upstream/v1"
+    assert route_after["api_key"] == "new-key"
+    assert route_after["model"] == "new-model"
+
 def test_fetch_channel_models_keeps_more_than_500_models(client):
     """fetch-models 不应把 600 个上游模型截断为 500 个。"""
     from unittest.mock import patch
