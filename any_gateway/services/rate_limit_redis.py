@@ -89,12 +89,66 @@ def _cutoff(window_sec: int) -> float:
     return time.time() - window_sec
 
 
+def _supports_eval_fallback(exc: Exception) -> bool:
+    """仅在脚本执行能力缺失时回退到原生命令，其他异常继续按 fail-open 处理。"""
+    msg = str(exc).lower()
+    return (
+        "unknown command" in msg and "eval" in msg
+    ) or "script" in msg and "not support" in msg
+
+
+async def _count_native(redis_client, key: str, window_sec: int) -> int:
+    cutoff = _cutoff(window_sec)
+    await redis_client.zremrangebyscore(key, 0, cutoff)
+    return int(await redis_client.zcard(key))
+
+
+async def _sum_native(redis_client, key: str, window_sec: int) -> float:
+    cutoff = _cutoff(window_sec)
+    await redis_client.zremrangebyscore(key, 0, cutoff)
+    members = await redis_client.zrange(key, 0, -1)
+    total = 0.0
+    for member in members:
+        sep = member.find(":")
+        if sep == -1:
+            continue
+        try:
+            total += float(member[sep + 1 :])
+        except ValueError:
+            continue
+    return total
+
+
+async def _record_count_native(redis_client, key: str, window_sec: int, request_id: str) -> None:
+    now = time.time()
+    cutoff = now - window_sec
+    await redis_client.zremrangebyscore(key, 0, cutoff)
+    await redis_client.zadd(key, {request_id: now})
+    await redis_client.expire(key, window_sec * 2)
+
+
+async def _record_sum_native(
+    redis_client, key: str, window_sec: int, request_id: str, value: float
+) -> None:
+    now = time.time()
+    cutoff = now - window_sec
+    member = f"{request_id}:{value}"
+    await redis_client.zremrangebyscore(key, 0, cutoff)
+    await redis_client.zadd(key, {member: now})
+    await redis_client.expire(key, window_sec * 2)
+
+
 async def get_window_count(redis_client, key: str, window_sec: int) -> int:
     """获取滑动窗口内请求计数。Redis 不可用时返回 0（fail open）。"""
     try:
         result = await redis_client.eval(_LUA_GET_COUNT, 1, key, _cutoff(window_sec))
         return int(result)
-    except Exception:
+    except Exception as exc:
+        if _supports_eval_fallback(exc):
+            try:
+                return await _count_native(redis_client, key, window_sec)
+            except Exception:
+                logger.warning(f"Redis get_window_count 原生命令回退失败，fail open: key={key}")
         logger.warning(f"Redis get_window_count 失败，fail open: key={key}")
         return 0
 
@@ -104,7 +158,12 @@ async def get_window_sum(redis_client, key: str, window_sec: int) -> float:
     try:
         result = await redis_client.eval(_LUA_GET_SUM, 1, key, _cutoff(window_sec))
         return float(result)
-    except Exception:
+    except Exception as exc:
+        if _supports_eval_fallback(exc):
+            try:
+                return await _sum_native(redis_client, key, window_sec)
+            except Exception:
+                logger.warning(f"Redis get_window_sum 原生命令回退失败，fail open: key={key}")
         logger.warning(f"Redis get_window_sum 失败，fail open: key={key}")
         return 0.0
 
@@ -114,7 +173,13 @@ async def record_request(redis_client, key: str, window_sec: int, request_id: st
     try:
         now = time.time()
         await redis_client.eval(_LUA_RECORD_COUNT, 1, key, now, window_sec, request_id)
-    except Exception:
+    except Exception as exc:
+        if _supports_eval_fallback(exc):
+            try:
+                await _record_count_native(redis_client, key, window_sec, request_id)
+                return
+            except Exception:
+                logger.warning(f"Redis record_request 原生命令回退失败: key={key}")
         logger.warning(f"Redis record_request 失败: key={key}")
 
 
@@ -126,5 +191,11 @@ async def record_value(
         now = time.time()
         member = f"{request_id}:{value}"
         await redis_client.eval(_LUA_RECORD_SUM, 1, key, now, window_sec, member)
-    except Exception:
+    except Exception as exc:
+        if _supports_eval_fallback(exc):
+            try:
+                await _record_sum_native(redis_client, key, window_sec, request_id, value)
+                return
+            except Exception:
+                logger.warning(f"Redis record_value 原生命令回退失败: key={key}")
         logger.warning(f"Redis record_value 失败: key={key}")

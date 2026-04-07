@@ -1,7 +1,9 @@
 .DS_Store
+.codex
 .claude/
 .superset/
 venv/
+.venv/
 data/
 docs/prds/
 docs/plans/

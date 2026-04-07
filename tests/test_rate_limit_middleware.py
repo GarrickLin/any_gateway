@@ -280,7 +280,24 @@ def test_type1_request_limit_not_exceeded_passes(client):
 
 
 # ---------------------------------------------------------------------------
-# 5. Type 1 超限 → Type 2 有余额 → 放行
+# 5. Type 1：无启用规则 → 回退 Type 2
+# ---------------------------------------------------------------------------
+
+
+def test_type1_without_active_rules_falls_back_to_type2(client):
+    """有 group 但没有任何启用规则时，不应标记为套餐，应回退到 Type 2。"""
+    username = "user_no_active_rules"
+    _run(_insert_user(username, quota_usd=50.0))
+    group_id = _run(_insert_group("group_no_active_rules"))
+    key = _run(_insert_token("t_no_active_rules", username=username, group_id=group_id))
+
+    resp = _post_chat(client, key)
+
+    assert resp.status_code != 429, f"Type 2 has quota, should not be 429, got {resp.status_code}"
+
+
+# ---------------------------------------------------------------------------
+# 6. Type 1 超限 → Type 2 有余额 → 放行
 # ---------------------------------------------------------------------------
 
 
@@ -304,7 +321,7 @@ def test_type1_exceeded_type2_has_quota_passes(client):
 
 
 # ---------------------------------------------------------------------------
-# 6. Type 1 超限 → Type 2 也超限 → 429
+# 7. Type 1 超限 → Type 2 也超限 → 429
 # ---------------------------------------------------------------------------
 
 
@@ -329,7 +346,7 @@ def test_type1_exceeded_type2_no_quota_returns_429(client):
 
 
 # ---------------------------------------------------------------------------
-# 7. Redis 不可用 → fail open → 放行
+# 8. Redis 不可用 → fail open → 放行
 # ---------------------------------------------------------------------------
 
 

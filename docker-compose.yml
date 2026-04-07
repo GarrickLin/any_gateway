@@ -4,6 +4,9 @@ services:
     ports:
       - "1389:1389"
     restart: unless-stopped
+    volumes:
+      - ./mock/mock_ad_server:/app
+
 
   redis:
     image: redis:7-alpine

@@ -30,14 +30,16 @@ async def check_rate_limits(
     crud = FastCRUD(RateLimit)
     result = await crud.get_multi(session, group_id=group_id)
     rules = result.get("data", [])
+    enabled_rules = [rule for rule in rules if rule["value"] > 0]
 
-    for rule in rules:
+    # 空规则集不应被视为套餐覆盖，否则仅因 token 绑定了 group 就会跳过余额扣费。
+    if not enabled_rules:
+        return False, "no active package rules configured"
+
+    for rule in enabled_rules:
         limit_type = rule["limit_type"]
         window_sec = rule["window_sec"]
         value = rule["value"]
-
-        if value <= 0:
-            continue  # 禁用规则
 
         key = build_key(group_id, limit_type, window_sec, username)
 
