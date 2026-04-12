@@ -77,6 +77,7 @@ def setup():
     yield  # 测试运行
     _db.engine = original_engine  # teardown: 还原 db.database.engine
     _gw.engine = original_gw_engine  # teardown: 还原 gateway.engine
+    asyncio.run(ENGINE.dispose())
 
 
 def test_routing_picks_highest_priority_group():

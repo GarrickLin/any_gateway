@@ -35,6 +35,8 @@ def setup_db():
             s.add(UserGroup(name="default"))
             await s.commit()
     asyncio.run(_run())
+    yield
+    asyncio.run(ENGINE.dispose())
 
 
 def test_lazy_create_user_new():

@@ -68,6 +68,8 @@ def setup_db():
             await conn.run_sync(SQLModel.metadata.create_all)
 
     asyncio.run(_create())
+    yield
+    asyncio.run(TEST_ENGINE.dispose())
 
 
 @pytest.fixture

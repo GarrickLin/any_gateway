@@ -5,16 +5,19 @@
 使用 FastAPI TestClient + SQLite 内存数据库 + mock Redis。
 """
 import asyncio
+import inspect
 import os
 import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, Session, create_engine
 
 # 确保 any_gateway 包路径在 sys.path 中
 _REPO_ROOT = Path(__file__).parent.parent
@@ -24,14 +27,18 @@ if str(_AG_PATH) not in sys.path:
 
 # 设置测试环境变量（在导入 app 之前）
 os.environ["ADMIN_KEY"] = "test-admin-secret"
-os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
+_TEST_DB_PATH = Path(tempfile.gettempdir()) / f"any_gateway_rate_limit_{uuid4().hex}.db"
+os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TEST_DB_PATH}"
 os.environ.setdefault("ADMIN_FALLBACK_KEY", "fallback-key")
 
-# 使用内存数据库引擎覆盖（StaticPool 保证跨连接共享同一 DB）
+# 使用临时文件数据库，避免多个 event loop/线程共享同一内存连接。
 TEST_ENGINE = create_async_engine(
-    "sqlite+aiosqlite:///:memory:",
+    f"sqlite+aiosqlite:///{_TEST_DB_PATH}",
     connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
+)
+SYNC_TEST_ENGINE = create_engine(
+    f"sqlite:///{_TEST_DB_PATH}",
+    connect_args={"check_same_thread": False},
 )
 
 
@@ -54,14 +61,13 @@ from gateway import app  # noqa: E402
 @pytest.fixture(scope="session", autouse=True)
 def setup_db():
     """创建测试数据库表（session 级别，只建一次）。"""
+    import db.models  # noqa: F401 - 确保所有表注册到 metadata
 
-    async def _create():
-        import db.models  # noqa: F401 - 确保所有表注册到 metadata
-
-        async with TEST_ENGINE.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
-
-    asyncio.run(_create())
+    SQLModel.metadata.create_all(SYNC_TEST_ENGINE)
+    yield
+    asyncio.run(TEST_ENGINE.dispose())
+    SYNC_TEST_ENGINE.dispose()
+    _TEST_DB_PATH.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -101,24 +107,24 @@ def client():
 
 
 def _run(coro):
-    """在当前线程运行协程（pytest-asyncio 未启用时使用）。"""
-    return asyncio.run(coro)
+    """兼容旧调用风格；仅在传入 awaitable 时才执行 asyncio.run。"""
+    if inspect.isawaitable(coro):
+        return asyncio.run(coro)
+    return coro
 
 
-async def _insert_user(username: str, quota_usd) -> None:
+def _insert_user(username: str, quota_usd) -> None:
     """插入 User 记录（quota_usd 可为 None、0 或正数）。
 
     SQLite 的 ORM 写入路径会把 None 转为 0.0（默认值），因此对 None 使用 raw SQL
     写入真实的 NULL 值，确保 check_account_quota(None) 能正确返回 True（无限放行）。
     """
-    from sqlalchemy import text
-
-    async with AsyncSession(TEST_ENGINE, expire_on_commit=False) as session:
+    with Session(SYNC_TEST_ENGINE) as session:
         # 幂等：先删除已有记录
-        await session.execute(text("DELETE FROM users WHERE username = :u"), {"u": username})
+        session.execute(text("DELETE FROM users WHERE username = :u"), {"u": username})
         # 插入新记录
         if quota_usd is None:
-            await session.execute(
+            session.execute(
                 text(
                     "INSERT INTO users (username, created_at, quota_usd, used_usd)"
                     " VALUES (:u, '2026-01-01Z', NULL, 0)"
@@ -126,31 +132,31 @@ async def _insert_user(username: str, quota_usd) -> None:
                 {"u": username},
             )
         else:
-            await session.execute(
+            session.execute(
                 text(
                     "INSERT INTO users (username, created_at, quota_usd, used_usd)"
                     " VALUES (:u, '2026-01-01Z', :q, 0)"
                 ),
                 {"u": username, "q": quota_usd},
             )
-        await session.commit()
+        session.commit()
 
 
-async def _insert_group(name: str) -> str:
+def _insert_group(name: str) -> str:
     """插入 UserGroup，返回 group_id。"""
-    async with AsyncSession(TEST_ENGINE, expire_on_commit=False) as session:
+    with Session(SYNC_TEST_ENGINE) as session:
         group = UserGroup(name=name)
         session.add(group)
-        await session.commit()
-        await session.refresh(group)
+        session.commit()
+        session.refresh(group)
         return group.id
 
 
-async def _insert_rate_limit(
+def _insert_rate_limit(
     group_id: str, window_sec: int, limit_type: str, value: float
 ) -> str:
     """插入 RateLimit 规则，返回 id。"""
-    async with AsyncSession(TEST_ENGINE, expire_on_commit=False) as session:
+    with Session(SYNC_TEST_ENGINE) as session:
         rl = RateLimit(
             group_id=group_id,
             window_sec=window_sec,
@@ -158,22 +164,22 @@ async def _insert_rate_limit(
             value=value,
         )
         session.add(rl)
-        await session.commit()
-        await session.refresh(rl)
+        session.commit()
+        session.refresh(rl)
         return rl.id
 
 
-async def _insert_token(
+def _insert_token(
     name: str,
     username: str | None = None,
     group_id: str | None = None,
 ) -> str:
     """插入 Token，返回 key（sk-xxx）。"""
-    async with AsyncSession(TEST_ENGINE, expire_on_commit=False) as session:
+    with Session(SYNC_TEST_ENGINE) as session:
         token = Token(name=name, username=username, group_id=group_id)
         session.add(token)
-        await session.commit()
-        await session.refresh(token)
+        session.commit()
+        session.refresh(token)
         return token.key
 
 

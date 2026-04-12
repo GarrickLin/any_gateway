@@ -351,6 +351,78 @@ async def _maybe_deduct(covered: bool, username: str | None, cost_usd: float) ->
     await _quota_mod.update_user_balance(username, cost_usd)
 
 
+async def _finalize_stream_usage(
+    request: Request,
+    request_id: str,
+    model_name: str | None,
+    duration_ms: float,
+    response_status: int,
+    accumulated_chunks: list[str],
+    provider: str,
+) -> None:
+    """在后台完成流式用量计算与落库，避免在已取消的请求上下文中操作 DB。"""
+    try:
+        stream_usage = parse_stream_usage(accumulated_chunks, provider)
+        stream_input_tokens = stream_usage.input_tokens
+        stream_output_tokens = stream_usage.output_tokens
+        stream_cache_read_tokens = stream_usage.cache_read_tokens
+        stream_cache_creation_tokens = stream_usage.cache_creation_tokens
+        logger.debug(
+            f"流式用量解析完成: provider={provider!r} input={stream_input_tokens} "
+            f"output={stream_output_tokens} cache_read={stream_cache_read_tokens} "
+            f"cache_creation={stream_cache_creation_tokens}"
+        )
+
+        stream_group_id = getattr(request.state, "token_group_id", None)
+        stream_multiplier = await _get_group_multiplier(stream_group_id)
+        async with AsyncSession(engine, expire_on_commit=False) as pricing_session:
+            stream_cost_usd = await calculate_cost(
+                session=pricing_session,
+                group_id=stream_group_id,
+                model=model_name,
+                input_tokens=stream_input_tokens,
+                output_tokens=stream_output_tokens,
+                cache_read_tokens=stream_cache_read_tokens,
+                cache_creation_tokens=stream_cache_creation_tokens,
+                multiplier=stream_multiplier,
+            )
+
+        await update_usage(
+            token_id=getattr(request.state, "token_id", None),
+            channel_id=None,
+            model=model_name,
+            input_tokens=stream_input_tokens,
+            output_tokens=stream_output_tokens,
+            cost_usd=stream_cost_usd,
+            duration_ms=duration_ms,
+            status=response_status or None,
+            is_stream=True,
+            username=getattr(request.state, "token_username", None),
+            request_id=request_id,
+            cache_read_tokens=stream_cache_read_tokens,
+            cache_creation_tokens=stream_cache_creation_tokens,
+            covered_by_package=getattr(request.state, "covered_by_package", False),
+        )
+
+        if stream_group_id:
+            await _update_rate_limit_counters(
+                group_id=stream_group_id,
+                request_id=request_id,
+                input_tokens=stream_input_tokens,
+                output_tokens=stream_output_tokens,
+                cost_usd=stream_cost_usd,
+                username=getattr(request.state, "token_username", None),
+            )
+
+        await _maybe_deduct(
+            covered=getattr(request.state, "covered_by_package", False),
+            username=getattr(request.state, "token_username", None),
+            cost_usd=stream_cost_usd,
+        )
+    except Exception:
+        logger.exception(f"流式请求收尾失败 (request_id={request_id})")
+
+
 async def _update_rate_limit_counters(
     group_id: str,
     request_id: str,
@@ -646,69 +718,19 @@ async def forward_streaming_request(
             task.add_done_callback(app.state.log_tasks.discard)
             logger.info(f"流式请求日志已入队, 当前task数量: {len(app.state.log_tasks)}")
 
-            # fire-and-forget 更新用量
-            _stream_usage = parse_stream_usage(accumulated_chunks, provider)
-            _stream_input_tokens = _stream_usage.input_tokens
-            _stream_output_tokens = _stream_usage.output_tokens
-            _stream_cache_read_tokens = _stream_usage.cache_read_tokens
-            _stream_cache_creation_tokens = _stream_usage.cache_creation_tokens
-            logger.debug(
-                f"流式用量解析完成: provider={provider!r} input={_stream_input_tokens} "
-                f"output={_stream_output_tokens} cache_read={_stream_cache_read_tokens} "
-                f"cache_creation={_stream_cache_creation_tokens}"
-            )
-            # 计算真实费用
-            _stream_group_id = getattr(request.state, "token_group_id", None)
-            _stream_multiplier = await _get_group_multiplier(_stream_group_id)
-            async with AsyncSession(engine, expire_on_commit=False) as _ps:
-                _stream_cost_usd = await calculate_cost(
-                    session=_ps,
-                    group_id=_stream_group_id,
-                    model=model_name,
-                    input_tokens=_stream_input_tokens,
-                    output_tokens=_stream_output_tokens,
-                    cache_read_tokens=_stream_cache_read_tokens,
-                    cache_creation_tokens=_stream_cache_creation_tokens,
-                    multiplier=_stream_multiplier,
-                )
-            usage_task = asyncio.create_task(
-                update_usage(
-                    token_id=getattr(request.state, "token_id", None),
-                    channel_id=None,
-                    model=model_name,
-                    input_tokens=_stream_input_tokens,
-                    output_tokens=_stream_output_tokens,
-                    cost_usd=_stream_cost_usd,
+            finalize_task = asyncio.create_task(
+                _finalize_stream_usage(
+                    request=request,
+                    request_id=request_id,
+                    model_name=model_name,
                     duration_ms=duration_ms,
-                    status=response_status or None,
-                    is_stream=True,
-                    username=getattr(request.state, "token_username", None),
-                    request_id=request_id,
-                    cache_read_tokens=_stream_cache_read_tokens,
-                    cache_creation_tokens=_stream_cache_creation_tokens,
-                    covered_by_package=getattr(request.state, "covered_by_package", False),
+                    response_status=response_status,
+                    accumulated_chunks=accumulated_chunks,
+                    provider=provider,
                 )
             )
-            app.state.log_tasks.add(usage_task)
-            usage_task.add_done_callback(app.state.log_tasks.discard)
-
-            # After 阶段：更新 Redis 限流计数（fire-and-forget）
-            if _stream_group_id:
-                asyncio.create_task(_update_rate_limit_counters(
-                    group_id=_stream_group_id,
-                    request_id=request_id,
-                    input_tokens=_stream_input_tokens,
-                    output_tokens=_stream_output_tokens,
-                    cost_usd=_stream_cost_usd,
-                    username=getattr(request.state, "token_username", None),
-                ))
-
-            # After 阶段：扣减用户余额（fire-and-forget）
-            asyncio.create_task(_maybe_deduct(
-                covered=getattr(request.state, "covered_by_package", False),
-                username=getattr(request.state, "token_username", None),
-                cost_usd=_stream_cost_usd,
-            ))
+            app.state.log_tasks.add(finalize_task)
+            finalize_task.add_done_callback(app.state.log_tasks.discard)
 
     # 返回流式响应
     return StreamingResponse(
