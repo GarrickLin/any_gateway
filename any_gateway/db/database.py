@@ -12,12 +12,17 @@ if "sqlite" in DATABASE_URL:
     _db_path = DATABASE_URL.split("///")[-1]
     Path(_db_path).parent.mkdir(parents=True, exist_ok=True)
 
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
+engine_kwargs = {
+    "echo": False,
+    "connect_args": {"check_same_thread": False},
+}
+
+# StaticPool 适合内存 SQLite；文件型 SQLite 复用单一异步连接时，
+# 请求取消后容易把后续请求共用的连接一并终止。
+if DATABASE_URL.endswith(":memory:"):
+    engine_kwargs["poolclass"] = StaticPool
+
+engine = create_async_engine(DATABASE_URL, **engine_kwargs)
 
 
 async def async_session_generator() -> AsyncGenerator[AsyncSession, None]:

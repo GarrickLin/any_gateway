@@ -872,6 +872,68 @@ def test_get_log_messages_admin_not_found(client):
     assert resp.status_code == 404
 
 
+def test_list_logs_returns_paginated_results_for_date_range(client):
+    """GET /admin/logs 应按日期范围返回分页日志列表。"""
+    asyncio.run(_seed_usage_logs([
+        {
+            "id": "log-in-range-1",
+            "username": "logs-admin-alice",
+            "model": "gpt-4o",
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "cache_read_tokens": 5,
+            "cache_creation_tokens": 1,
+            "cost_usd": 0.42,
+            "status": 200,
+            "created_at": "2026-04-12T10:00:00Z",
+        },
+        {
+            "id": "log-in-range-2",
+            "username": "logs-admin-bob",
+            "model": "gpt-4o-mini",
+            "input_tokens": 50,
+            "output_tokens": 10,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cost_usd": 0.11,
+            "status": 500,
+            "created_at": "2026-04-12T11:00:00Z",
+        },
+        {
+            "id": "log-out-of-range",
+            "username": "logs-admin-carol",
+            "model": "claude-sonnet",
+            "input_tokens": 999,
+            "output_tokens": 999,
+            "cache_read_tokens": 999,
+            "cache_creation_tokens": 999,
+            "cost_usd": 9.99,
+            "status": 200,
+            "created_at": "2026-04-11T23:59:59Z",
+        },
+    ]))
+
+    resp = client.get(
+        "/admin/logs",
+        params={
+            "start_date": "2026-04-12",
+            "end_date": "2026-04-12",
+            "page": 1,
+            "page_size": 20,
+        },
+        headers={"x-admin-key": "test-admin-secret"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    body = resp.json()
+    assert body["total"] == 2
+    assert body["page"] == 1
+    assert body["page_size"] == 20
+    assert len(body["data"]) == 2
+    assert [item["id"] for item in body["data"]] == ["log-in-range-2", "log-in-range-1"]
+    assert {item["username"] for item in body["data"]} == {"logs-admin-alice", "logs-admin-bob"}
+
+
 def test_update_token_group_id(client, user_jwt_headers):
     """PATCH /user/tokens/:id 应能修改 group_id。"""
     admin_headers = {"x-admin-key": "test-admin-secret"}
