@@ -17,6 +17,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
+from constants import SKIP_SSL_VERIFY
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from fastcrud import FastCRUD, crud_router
@@ -786,7 +787,7 @@ async def fetch_channel_models(
     logger.info(f"fetch-models → {models_url}  provider={provider}")
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, verify=not SKIP_SSL_VERIFY) as client:
             resp = await client.get(models_url, headers=headers)
             resp.raise_for_status()
             data = resp.json()

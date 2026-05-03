@@ -30,6 +30,7 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - SUPERADMIN_USERNAME=${SUPERADMIN_USERNAME:-superadmin}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - SKIP_SSL_VERIFY=${SKIP_SSL_VERIFY:-0}
     depends_on:
       - redis
     restart: unless-stopped

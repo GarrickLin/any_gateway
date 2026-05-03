@@ -11,6 +11,7 @@ from constants import (
     CONFIG_FILE,
     TIMEOUT_BOUND,
     NUM_LOG_CONSUMERS,
+    SKIP_SSL_VERIFY,
 )
 from loguru import logger
 from urllib.parse import urljoin
@@ -58,6 +59,8 @@ async def lifespan(app: FastAPI):
     # 初始化日志队列
     log_writer.log_queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
     logger.info("日志队列已初始化")
+
+    logger.info(f"SKIP_SSL_VERIFY={SKIP_SSL_VERIFY}（跳过上游 SSL 证书验证）")
 
     # 启动多个后台日志消费者任务
     consumer_tasks = []
@@ -619,7 +622,7 @@ async def forward_streaming_request(
         nonlocal response_status, response_headers, error_message
 
         try:
-            async with httpx.AsyncClient(timeout=TIMEOUT_BOUND) as client:
+            async with httpx.AsyncClient(timeout=TIMEOUT_BOUND, verify=not SKIP_SSL_VERIFY) as client:
                 async with client.stream(
                     method=request.method,
                     url=url,
@@ -812,7 +815,7 @@ async def forward_request(
         )
 
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT_BOUND) as client:
+        async with httpx.AsyncClient(timeout=TIMEOUT_BOUND, verify=not SKIP_SSL_VERIFY) as client:
             # 转发请求到后端
             response = await client.request(
                 method=request.method,
@@ -1202,7 +1205,7 @@ async def refresh_models(request: Request):
 
             logger.info(f"正在从 {models_url} 获取模型列表")
 
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, verify=not SKIP_SSL_VERIFY) as client:
                 response = await client.get(models_url, headers=headers)
                 response.raise_for_status()
                 data = response.json()
