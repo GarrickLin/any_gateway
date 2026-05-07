@@ -8,161 +8,24 @@ import remarkGfm from 'remark-gfm'
 import dayjs from 'dayjs'
 import { getLogs, getMyLogs, getLogMessages, getMyLogMessages } from '../../api/logs'
 import { useAuthStore } from '../../store/auth'
+import {
+  type ContentBlock,
+  type MessageEntry,
+  formatOpenAIToolCalls,
+  parseMessages,
+  parseRequestMaxTokens,
+  parseResponseParts,
+} from './logParsing'
 
 const { Row, Col } = Grid
 const { RangePicker } = DatePicker
 
 const today = dayjs().format('YYYY-MM-DD')
 
-interface ContentBlock {
-  type: string
-  text?: string          // text block
-  thinking?: string      // thinking block
-  name?: string          // tool_use
-  input?: unknown        // tool_use
-  id?: string            // tool_use id
-  tool_use_id?: string   // tool_result
-  content?: string | ContentBlock[]  // tool_result
-}
-
-interface MessageEntry {
-  role: string
-  content: string | ContentBlock[]
-}
-
 interface MessagesCache {
   loading: boolean
   data?: { request_url?: string; request_body?: string; response_body?: string }
   error?: string
-}
-
-const parseMessages = (bodyStr?: string): MessageEntry[] => {
-  if (!bodyStr) return []
-  try {
-    const parsed = JSON.parse(bodyStr)
-    return Array.isArray(parsed?.messages) ? parsed.messages : []
-  } catch {
-    return []
-  }
-}
-
-/** 从单个 SSE JSON 对象中提取文本增量（返回 null 表示无内容） */
-const extractDeltaText = (obj: Record<string, unknown>): string | null => {
-  // 错误响应: {"error":{"code":"...","message":"..."}}
-  const error = obj.error as Record<string, unknown> | undefined
-  if (error) {
-    const code = error.code != null ? `[${error.code}] ` : ''
-    const message = typeof error.message === 'string' ? error.message : JSON.stringify(error)
-    return `${code}${message}`
-  }
-  // OpenAI / 兼容协议: choices[0].delta.content 或 choices[0].message.content
-  const choices = obj.choices as Array<Record<string, unknown>> | undefined
-  if (Array.isArray(choices) && choices.length > 0) {
-    const delta = choices[0].delta as Record<string, unknown> | undefined
-    const message = choices[0].message as Record<string, unknown> | undefined
-    const text = (delta?.content ?? message?.content) as string | undefined
-    if (typeof text === 'string') return text
-  }
-  // Anthropic streaming: content_block_delta event
-  if (obj.type === 'content_block_delta') {
-    const d = obj.delta as Record<string, unknown> | undefined
-    if (typeof d?.text === 'string') return d.text
-  }
-  // Anthropic non-streaming: content[0].text
-  const content = obj.content as Array<Record<string, unknown>> | undefined
-  if (Array.isArray(content) && content.length > 0 && typeof content[0].text === 'string') {
-    return content[0].text
-  }
-  // Gemini streaming/non-streaming: candidates[0].content.parts[0].text
-  const candidates = obj.candidates as Array<Record<string, unknown>> | undefined
-  if (Array.isArray(candidates) && candidates.length > 0) {
-    const parts = (candidates[0].content as Record<string, unknown> | undefined)
-      ?.parts as Array<Record<string, unknown>> | undefined
-    if (Array.isArray(parts) && typeof parts[0]?.text === 'string') return parts[0].text
-  }
-  return null
-}
-
-const parseResponseContent = (bodyStr?: string): string => {
-  if (!bodyStr) return ''
-
-  const trimmed = bodyStr.trimStart()
-
-  // SSE 格式检测：包含 "data:" 前缀的行
-  if (trimmed.startsWith('data:') || trimmed.includes('\ndata:')) {
-    const textParts: string[] = []
-    // 追踪 tool_use 块：index -> { name, partialJson }
-    const toolBlocks = new Map<number, { name: string; partialJson: string }>()
-
-    for (const line of bodyStr.split('\n')) {
-      const s = line.trim()
-      if (!s.startsWith('data:')) continue
-      const payload = s.slice(5).trim()
-      if (payload === '[DONE]') continue
-      try {
-        const obj = JSON.parse(payload) as Record<string, unknown>
-
-        // 记录 tool_use 块的名称
-        if (obj.type === 'content_block_start') {
-          const block = obj.content_block as Record<string, unknown> | undefined
-          const idx = obj.index as number | undefined
-          if (block?.type === 'tool_use' && idx !== undefined) {
-            toolBlocks.set(idx, { name: (block.name as string) ?? 'unknown', partialJson: '' })
-          }
-        }
-
-        const text = extractDeltaText(obj)
-        if (text) {
-          textParts.push(text)
-        } else if (obj.type === 'content_block_delta') {
-          // 拼装 input_json_delta（tool_use 输入）
-          const d = obj.delta as Record<string, unknown> | undefined
-          const idx = obj.index as number | undefined
-          if (d?.type === 'input_json_delta' && typeof d.partial_json === 'string' && idx !== undefined) {
-            const block = toolBlocks.get(idx)
-            if (block) block.partialJson += d.partial_json
-          }
-        }
-      } catch { /* 忽略无效行 */ }
-    }
-
-    // 合并文本和工具调用（可能同时存在）
-    const parts: string[] = []
-    if (textParts.length > 0) parts.push(textParts.join(''))
-    if (toolBlocks.size > 0) {
-      parts.push(Array.from(toolBlocks.values()).map(({ name, partialJson }) => {
-        let input = partialJson
-        try { input = JSON.stringify(JSON.parse(partialJson), null, 2) } catch { /* keep raw */ }
-        return `**${name}**\n\`\`\`json\n${input}\n\`\`\``
-      }).join('\n\n'))
-    }
-    return parts.join('\n\n')
-  }
-
-  // 非流式：直接解析 JSON
-  try {
-    const obj = JSON.parse(bodyStr) as Record<string, unknown>
-
-    // Anthropic 非流式：content 数组可能同时包含 text 和 tool_use 块
-    const content = obj.content as Array<Record<string, unknown>> | undefined
-    if (Array.isArray(content) && content.length > 0) {
-      const parts: string[] = []
-      for (const block of content) {
-        if (typeof block.text === 'string') {
-          parts.push(block.text)
-        } else if (block.type === 'tool_use') {
-          let input = ''
-          try { input = JSON.stringify(block.input, null, 2) } catch { input = String(block.input) }
-          parts.push(`**${block.name as string}**\n\`\`\`json\n${input}\n\`\`\``)
-        }
-      }
-      if (parts.length > 0) return parts.join('\n\n')
-    }
-
-    return extractDeltaText(obj) ?? JSON.stringify(obj, null, 2)
-  } catch {
-    return bodyStr
-  }
 }
 
 const preStyle: React.CSSProperties = {
@@ -225,6 +88,73 @@ const RenderContent: React.FC<{ content: MessageEntry['content'] }> = ({ content
     return <>{content.map((b, i) => <RenderBlock key={i} block={b} />)}</>
   }
   return <span style={{ color: '#8c8c8c' }}>（无内容）</span>
+}
+
+const RenderMessage: React.FC<{ msg: MessageEntry }> = ({ msg }) => {
+  const toolCalls = formatOpenAIToolCalls(msg.tool_calls)
+  return (
+    <>
+      {msg.reasoning_content && (
+        <details style={{ margin: '4px 0 8px' }}>
+          <summary style={{ cursor: 'pointer', color: '#8c8c8c', fontSize: 12 }}>reasoning</summary>
+          <pre style={{ ...preStyle, background: '#fafafa', color: '#595959', marginTop: 4 }}>{msg.reasoning_content}</pre>
+        </details>
+      )}
+      <RenderContent content={msg.content} />
+      {toolCalls && (
+        <div style={{ marginTop: 8 }}>
+          <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{toolCalls}</ReactMarkdown>
+        </div>
+      )}
+      {msg.tool_call_id && (
+        <Typography.Text type="secondary" style={{ display: 'block', marginTop: 6, fontSize: 12 }}>
+          tool_call_id: {msg.tool_call_id}
+        </Typography.Text>
+      )}
+    </>
+  )
+}
+
+const RenderReasoning: React.FC<{ reasoning: string }> = ({ reasoning }) => {
+  if (!reasoning) return null
+  return (
+    <details style={{ marginBottom: 8 }}>
+      <summary style={{ cursor: 'pointer', color: '#8c8c8c', fontSize: 12 }}>Reasoning</summary>
+      <div style={{
+        background: '#fafafa',
+        color: '#595959',
+        marginTop: 4,
+        maxHeight: 360,
+        overflow: 'auto',
+        padding: '6px 10px',
+        borderRadius: 4,
+      }}>
+        <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{reasoning}</ReactMarkdown>
+      </div>
+    </details>
+  )
+}
+
+const RenderWarnings: React.FC<{ warnings: string[]; maxTokens?: number }> = ({ warnings, maxTokens }) => {
+  if (warnings.length === 0) return null
+  return (
+    <div style={{
+      background: '#fff7e6',
+      border: '1px solid #ffd591',
+      color: '#ad6800',
+      padding: '6px 10px',
+      borderRadius: 4,
+      marginBottom: 8,
+      fontSize: 12,
+    }}>
+      {warnings.map((warning, index) => (
+        <div key={index}>
+          {warning}
+          {maxTokens !== undefined ? ` 当前请求 max_tokens=${maxTokens}。` : ''}
+        </div>
+      ))}
+    </div>
+  )
 }
 
 const roleColor: Record<string, string> = {
@@ -431,7 +361,8 @@ const Logs: React.FC = () => {
             )
           }
           const messages = parseMessages(cache.data?.request_body)
-          const responseText = parseResponseContent(cache.data?.response_body)
+          const responseParts = parseResponseParts(cache.data?.response_body)
+          const maxTokens = parseRequestMaxTokens(cache.data?.request_body)
           const requestUrl = cache.data?.request_url
           const rawRequestJson = (() => {
             if (!cache.data?.request_body) return ''
@@ -461,7 +392,7 @@ const Logs: React.FC = () => {
                         padding: '4px 10px', borderRadius: 4,
                         fontSize: 13, lineHeight: 1.6,
                       }}>
-                        <RenderContent content={msg.content} />
+                        <RenderMessage msg={msg} />
                       </div>
                     </div>
                   ))}
@@ -502,7 +433,7 @@ const Logs: React.FC = () => {
                   </Collapse.Item>
                 </Collapse>
               )}
-              {responseText && (
+              {(responseParts.warnings.length > 0 || responseParts.reasoning || responseParts.content || responseParts.toolCalls || responseParts.errors) && (
                 <>
                   <Typography.Text bold style={{ display: 'block', margin: '12px 0 8px' }}>响应内容</Typography.Text>
                   <div style={{
@@ -510,7 +441,19 @@ const Logs: React.FC = () => {
                     background: '#f0f9eb', padding: '6px 16px', borderRadius: 4,
                     fontSize: 13, lineHeight: 1.6,
                   }}>
-                    <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{responseText}</ReactMarkdown>
+                    <RenderWarnings warnings={responseParts.warnings} maxTokens={maxTokens} />
+                    <RenderReasoning reasoning={responseParts.reasoning} />
+                    {responseParts.content && (
+                      <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{responseParts.content}</ReactMarkdown>
+                    )}
+                    {responseParts.toolCalls && (
+                      <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{responseParts.toolCalls}</ReactMarkdown>
+                    )}
+                    {responseParts.errors && (
+                      <pre style={{ ...preStyle, background: '#fff2f0', color: '#cf1322', marginTop: 8 }}>
+                        {responseParts.errors}
+                      </pre>
+                    )}
                   </div>
                 </>
               )}
