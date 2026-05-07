@@ -82,4 +82,25 @@ assert.equal(messages[1].tool_call_id, 'call_1')
 assert.equal(parseRequestMaxTokens(JSON.stringify({ max_tokens: 30 })), 30)
 assert.equal(parseRequestMaxTokens(JSON.stringify({ model: 'x' })), undefined)
 
+const toolCallOnly = JSON.stringify({
+  choices: [{
+    finish_reason: 'tool_calls',
+    message: {
+      role: 'assistant',
+      content: '',
+      reasoning_content: '需要调用工具',
+      tool_calls: [{
+        id: 'call_2',
+        type: 'function',
+        function: { name: 'get_stock_fundamentals_unified', arguments: '{"ticker":"688256"}' },
+      }],
+    },
+  }],
+})
+const toolCallParts = parseResponseParts(toolCallOnly)
+assert.equal(toolCallParts.content, '')
+assert.equal(toolCallParts.finishReason, 'tool_calls')
+assert.match(toolCallParts.toolCalls, /get_stock_fundamentals_unified/)
+assert.match(toolCallParts.warnings[0], /工具调用/)
+
 await writeFile(join(outdir, 'logParsing.test.ok'), 'ok')

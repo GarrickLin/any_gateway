@@ -214,7 +214,7 @@ export const parseResponseParts = (bodyStr?: string): ParsedResponseContent => {
       toolCalls: toolParts.join('\n\n'),
       errors: errors.join('\n\n'),
       finishReason,
-      warnings: buildResponseWarnings(finishReason, reasoningParts.length > 0, textParts.length > 0),
+      warnings: buildResponseWarnings(finishReason, reasoningParts.length > 0, textParts.length > 0, toolParts.length > 0),
     }
   }
 
@@ -249,7 +249,12 @@ export const parseResponseParts = (bodyStr?: string): ParsedResponseContent => {
           toolCalls: formatOpenAIToolCalls(message.tool_calls as OpenAIToolCall[] | undefined),
           errors: '',
           finishReason,
-          warnings: buildResponseWarnings(finishReason, Boolean(reasoning), Boolean(content)),
+          warnings: buildResponseWarnings(
+            finishReason,
+            Boolean(reasoning),
+            Boolean(content),
+            Boolean(message.tool_calls),
+          ),
         }
       }
     }
@@ -266,12 +271,15 @@ const buildResponseWarnings = (
   finishReason: string | undefined,
   hasReasoning: boolean,
   hasContent: boolean,
+  hasToolCalls: boolean,
 ): string[] => {
   const warnings: string[] = []
   if (finishReason === 'length') {
     warnings.push('响应被长度限制截断（finish_reason=length）。如果只有 Reasoning 没有正文，通常是 max_tokens 太低，模型在思考阶段耗尽了输出 token。')
   }
-  if (hasReasoning && !hasContent && finishReason !== 'length') {
+  if (finishReason === 'tool_calls' && hasToolCalls && !hasContent) {
+    warnings.push('模型返回了工具调用（finish_reason=tool_calls），因此正文 content 为空。')
+  } else if (hasReasoning && !hasContent && finishReason !== 'length') {
     warnings.push('响应包含 Reasoning，但没有正文 content。')
   }
   return warnings

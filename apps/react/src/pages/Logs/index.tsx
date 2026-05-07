@@ -447,7 +447,10 @@ const Logs: React.FC = () => {
                       <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{responseParts.content}</ReactMarkdown>
                     )}
                     {responseParts.toolCalls && (
-                      <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{responseParts.toolCalls}</ReactMarkdown>
+                      <div style={{ marginTop: responseParts.content ? 8 : 0 }}>
+                        <Typography.Text bold style={{ display: 'block', marginBottom: 4 }}>工具调用</Typography.Text>
+                        <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{responseParts.toolCalls}</ReactMarkdown>
+                      </div>
                     )}
                     {responseParts.errors && (
                       <pre style={{ ...preStyle, background: '#fff2f0', color: '#cf1322', marginTop: 8 }}>
