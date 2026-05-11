@@ -60,6 +60,7 @@ const Layout: React.FC = () => {
         onCollapse={setCollapsed}
         collapsible
         width={200}
+        collapsedWidth={64}
       >
         <div className="ag-brand">
           <div className="ag-brand-mark">

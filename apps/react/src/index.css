@@ -82,6 +82,12 @@ a:hover {
   color: var(--ag-on-surface-variant);
 }
 
+.ag-sidebar.arco-layout-sider-collapsed .ag-brand {
+  justify-content: center;
+  padding-right: 0;
+  padding-left: 0;
+}
+
 .ag-brand {
   display: flex;
   align-items: center;
