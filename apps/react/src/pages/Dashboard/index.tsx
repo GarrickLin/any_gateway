@@ -2,11 +2,9 @@ import React, { useEffect, useState } from 'react'
 import dayjs from 'dayjs'
 import {
   Grid,
-  Card,
   Statistic,
   Table,
   Progress,
-  Typography,
   Spin,
   Message,
   Input,
@@ -446,17 +444,18 @@ const Dashboard: React.FC = () => {
   ]
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Typography.Title heading={5} style={{ margin: 0 }}>
-          Dashboard
-        </Typography.Title>
+    <div className="ag-page ag-dashboard-page">
+      <div className="ag-page-header">
+        <div>
+          <p className="ag-page-eyebrow">System Overview</p>
+          <h1 className="ag-page-title">Dashboard</h1>
+        </div>
         <Button icon={<IconRefresh />} loading={loading} onClick={handleRefresh}>刷新</Button>
       </div>
 
-      <div style={{ background: '#fff', padding: 16, marginBottom: 16, borderRadius: 4 }}>
-        <Row gutter={16} align="center">
-          <Col span={isAdmin ? 8 : 10}>
+      <div className="ag-filter-panel ag-dashboard-filter">
+        <Row gutter={[16, 16]} align="center">
+          <Col xs={24} md={isAdmin ? 8 : 10}>
             <RangePicker
               style={{ width: '100%' }}
               value={[dayjs(draftFilters.startDate), dayjs(draftFilters.endDate)]}
@@ -470,7 +469,7 @@ const Dashboard: React.FC = () => {
             />
           </Col>
           {isAdmin && (
-            <Col span={6}>
+            <Col xs={24} md={6}>
               <Select
                 style={{ width: '100%' }}
                 placeholder="选择用户"
@@ -484,8 +483,8 @@ const Dashboard: React.FC = () => {
               />
             </Col>
           )}
-          <Col span={isAdmin ? 10 : 14}>
-            <Space wrap>
+          <Col xs={24} md={isAdmin ? 10 : 14}>
+            <Space wrap className="ag-dashboard-filter-actions">
               <Button type="primary" onClick={handleSearch}>查询</Button>
               <Button loading={exporting} onClick={handleExport}>下载 CSV</Button>
             </Space>
@@ -494,43 +493,49 @@ const Dashboard: React.FC = () => {
       </div>
 
       <Spin loading={loading} style={{ display: 'block' }}>
-        <Row gutter={16} align="stretch" style={{ marginBottom: 16 }}>
-          <Col xs={24} sm={12} lg={6}>
-            <Card style={{ height: '100%' }}>
+        <div className="ag-stat-grid ag-dashboard-stats">
+          <div className="ag-stat-card">
+            <div className="ag-stat-card-inner">
               <Statistic title="累计请求数" value={overview?.request_count ?? 0} suffix="次" />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card style={{ height: '100%' }}>
+            </div>
+          </div>
+          <div className="ag-stat-card">
+            <div className="ag-stat-card-inner">
               <Statistic
                 title="累计费用（含套餐）"
                 value={overview?.total_cost_usd ?? 0}
                 precision={4}
                 suffix="USD"
               />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card style={{ height: '100%' }}>
+            </div>
+          </div>
+          <div className="ag-stat-card ag-stat-card-muted">
+            <div className="ag-stat-card-inner">
               <Statistic
                 title="实际扣费"
                 value={overview?.actual_cost_usd ?? 0}
                 precision={4}
                 suffix="USD"
               />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card style={{ height: '100%' }}>
+            </div>
+          </div>
+          <div className="ag-stat-card">
+            <div className="ag-stat-card-inner">
               <Statistic
                 title="累计 Token 用量"
                 value={overview?.total_token_usage ?? 0}
               />
-            </Card>
-          </Col>
-        </Row>
+            </div>
+          </div>
+        </div>
 
-        <Card title="用量统计表" style={{ marginBottom: 16 }}>
+        <div className="ag-data-panel ag-dashboard-panel">
+          <div className="ag-panel-header">
+            <div>
+              <h2 className="ag-panel-title">用量统计表</h2>
+              <p className="ag-panel-subtitle">按日期、用户与模型汇总请求和成本</p>
+            </div>
+          </div>
           <Table
             rowKey={(record) => `${record.date}:${record.username ?? 'self'}:${record.model ?? 'unknown'}`}
             columns={usageColumns}
@@ -546,9 +551,15 @@ const Dashboard: React.FC = () => {
             scroll={{ x: 1200 }}
             noDataElement={<span style={{ color: '#999' }}>暂无数据</span>}
           />
-        </Card>
+        </div>
 
-        <Card title="模型请求统计表" style={{ marginBottom: 16 }}>
+        <div className="ag-data-panel ag-dashboard-panel">
+          <div className="ag-panel-header">
+            <div>
+              <h2 className="ag-panel-title">模型请求统计表</h2>
+              <p className="ag-panel-subtitle">按模型聚合当前筛选范围内的请求数</p>
+            </div>
+          </div>
           <Table
             rowKey="model"
             columns={modelColumns}
@@ -563,15 +574,21 @@ const Dashboard: React.FC = () => {
             size="small"
             noDataElement={<span style={{ color: '#999' }}>暂无数据</span>}
           />
-        </Card>
+        </div>
 
         {myStatus && (
-          <Card style={{ marginTop: 24 }} title="账户余额">
+          <div className="ag-data-panel ag-dashboard-panel ag-account-panel">
+            <div className="ag-panel-header">
+              <div>
+                <h2 className="ag-panel-title">账户余额</h2>
+                <p className="ag-panel-subtitle">查看消费额度并使用兑换券充值</p>
+              </div>
+            </div>
             <Row gutter={24} align="center">
-              <Col span={6}>
+              <Col xs={24} sm={12} lg={6}>
                 <Statistic title="已消费" value={myStatus.used_usd?.toFixed(4)} suffix=" USD" />
               </Col>
-              <Col span={6}>
+              <Col xs={24} sm={12} lg={6}>
                 <Statistic
                   title="剩余"
                   value={myStatus.quota_usd != null
@@ -580,7 +597,7 @@ const Dashboard: React.FC = () => {
                   suffix={myStatus.quota_usd != null ? ' USD' : ''}
                 />
               </Col>
-              <Col span={12}>
+              <Col xs={24} lg={12}>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <Input
                     size="small"
@@ -604,11 +621,17 @@ const Dashboard: React.FC = () => {
                 )}
               </Col>
             </Row>
-          </Card>
+          </div>
         )}
 
         {myStatus && (
-          <Card style={{ marginTop: 16 }} title="分组限流状态">
+          <div className="ag-data-panel ag-dashboard-panel ag-rate-limit-panel">
+            <div className="ag-panel-header">
+              <div>
+                <h2 className="ag-panel-title">分组限流状态</h2>
+                <p className="ag-panel-subtitle">展示当前分组规则的窗口、上限与剩余额度</p>
+              </div>
+            </div>
             <Table
               rowKey="rule_id"
               pagination={false}
@@ -661,7 +684,7 @@ const Dashboard: React.FC = () => {
                 },
               ]}
             />
-          </Card>
+          </div>
         )}
       </Spin>
     </div>

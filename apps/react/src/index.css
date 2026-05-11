@@ -328,6 +328,129 @@ a:hover {
   line-height: 1.15;
 }
 
+.ag-dashboard-page {
+  gap: 20px;
+}
+
+.ag-dashboard-filter {
+  background: rgba(243, 244, 246, 0.88);
+}
+
+.ag-dashboard-filter-actions {
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.ag-dashboard-stats {
+  margin-bottom: 20px;
+}
+
+.ag-dashboard-stats .ag-stat-card {
+  display: flex;
+  align-items: stretch;
+  min-height: 132px;
+  padding: 22px;
+}
+
+.ag-stat-card-muted {
+  background: var(--ag-surface-low);
+}
+
+.ag-stat-card-inner {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+}
+
+.ag-stat-card .arco-statistic {
+  width: 100%;
+}
+
+.ag-stat-card .arco-statistic-title {
+  margin-bottom: 12px;
+  color: var(--ag-outline);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.4;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ag-stat-card .arco-statistic-content {
+  color: var(--ag-on-surface);
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.ag-stat-card .arco-statistic-content .arco-statistic-value {
+  font-weight: inherit;
+}
+
+.ag-dashboard-panel {
+  margin-bottom: 20px;
+}
+
+.ag-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 24px 16px;
+  border-bottom: 1px solid rgba(195, 198, 214, 0.28);
+  background: var(--ag-surface-lowest);
+}
+
+.ag-panel-title {
+  margin: 0;
+  color: var(--ag-on-surface);
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.ag-panel-subtitle {
+  margin: 6px 0 0;
+  color: var(--ag-outline);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ag-dashboard-panel .arco-table-container {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.ag-dashboard-panel .arco-table-pagination {
+  margin: 16px 20px 18px;
+}
+
+.ag-account-panel {
+  padding-bottom: 24px;
+}
+
+.ag-account-panel > .arco-row {
+  padding: 6px 24px 0;
+}
+
+.ag-account-panel .arco-statistic-title {
+  color: var(--ag-outline);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ag-account-panel .arco-statistic-content {
+  color: var(--ag-on-surface);
+  font-weight: 800;
+}
+
+.ag-rate-limit-panel .arco-progress-line {
+  max-width: 100%;
+}
+
 .ag-role-badge {
   display: inline-flex;
   align-items: center;
@@ -693,6 +816,18 @@ pre code {
 
   .ag-filter-panel {
     padding: 16px;
+  }
+
+  .ag-dashboard-filter-actions {
+    justify-content: flex-start;
+  }
+
+  .ag-panel-header {
+    padding: 18px 18px 14px;
+  }
+
+  .ag-account-panel > .arco-row {
+    padding: 4px 18px 0;
   }
 
   .ag-login-page {
