@@ -4,8 +4,7 @@ import {
   Layout as ArcoLayout,
   Menu,
   Button,
-  Typography,
-  Space,
+  Tooltip,
 } from '@arco-design/web-react'
 import {
   IconLock,
@@ -17,11 +16,24 @@ import {
   IconUser,
   IconTag,
   IconStorage,
+  IconPoweroff,
 } from '@arco-design/web-react/icon'
 import { useAuthStore } from '../../store/auth'
 
 const { Sider, Header, Content } = ArcoLayout
 const MenuItem = Menu.Item
+
+const pageTitles: Record<string, string> = {
+  dashboard: 'Dashboard',
+  apikeys: 'API Keys',
+  chat: 'Conversations',
+  logs: 'Request Logs',
+  groups: 'Groups',
+  channels: 'Channels',
+  prices: 'Pricing',
+  vouchers: 'Vouchers',
+  users: 'User Management',
+}
 
 const Layout: React.FC = () => {
   const navigate = useNavigate()
@@ -35,26 +47,35 @@ const Layout: React.FC = () => {
   }
 
   const currentKey = location.pathname.slice(1) || 'apikeys'
+  const currentPageTitle = pageTitles[currentKey] ?? 'Workspace'
 
   const isAdmin = role === 'admin' || role === 'superadmin'
   const isSuperAdmin = role === 'superadmin'
 
   return (
-    <ArcoLayout style={{ height: '100vh' }}>
+    <ArcoLayout className="ag-shell">
       <Sider
+        className="ag-sidebar"
         collapsed={collapsed}
         onCollapse={setCollapsed}
         collapsible
         width={200}
-        style={{ background: '#fff', borderRight: '1px solid #e5e6eb' }}
       >
-        <div style={{ padding: '16px', textAlign: 'center', fontWeight: 600, fontSize: 16 }}>
-          {collapsed ? 'AG' : 'Any Gateway'}
+        <div className="ag-brand">
+          <div className="ag-brand-mark">
+            <img src="/icon.png" alt="" />
+          </div>
+          {!collapsed && (
+            <div>
+              <div className="ag-brand-title">Gateway</div>
+              <div className="ag-brand-subtitle">AI Infrastructure</div>
+            </div>
+          )}
         </div>
         <Menu
+          className="ag-nav"
           selectedKeys={[currentKey]}
           onClickMenuItem={(key) => navigate(`/${key}`)}
-          style={{ border: 'none' }}
         >
           <MenuItem key="dashboard">
             <IconDashboard /> 仪表板
@@ -92,31 +113,25 @@ const Layout: React.FC = () => {
         </Menu>
       </Sider>
       <ArcoLayout>
-        <Header
-          style={{
-            background: '#fff',
-            borderBottom: '1px solid #e5e6eb',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'flex-end',
-            padding: '0 16px',
-          }}
-        >
-          <Space>
-            <Typography.Text>
-              {username}
-              {role && (
-                <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-                  [{role}]
-                </Typography.Text>
-              )}
-            </Typography.Text>
-            <Button size="small" onClick={handleLogout}>
-              退出登录
-            </Button>
-          </Space>
+        <Header className="ag-topbar">
+          <div className="ag-topbar-title">
+            <span className="ag-topbar-system">Any Gateway</span>
+            <span className="ag-topbar-page">{currentPageTitle}</span>
+          </div>
+          <div className="ag-topbar-actions">
+            <span className="ag-username">{username}</span>
+            {role && <span className="ag-role-badge">{role}</span>}
+            <Tooltip content="退出登录">
+              <Button
+                className="ag-icon-button"
+                icon={<IconPoweroff />}
+                aria-label="退出登录"
+                onClick={handleLogout}
+              />
+            </Tooltip>
+          </div>
         </Header>
-        <Content style={{ padding: 24, overflow: 'auto' }}>
+        <Content className="ag-content">
           <Outlet />
         </Content>
       </ArcoLayout>
