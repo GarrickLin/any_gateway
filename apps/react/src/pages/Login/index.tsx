@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Form, Input, Button, Card, Message } from '@arco-design/web-react'
+import { IconLock, IconUser } from '@arco-design/web-react/icon'
 import { login } from '../../api/auth'
 import { useAuthStore } from '../../store/auth'
 
@@ -33,45 +34,50 @@ const Login: React.FC = () => {
   }
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        height: '100vh',
-        backgroundImage: 'url(/background.png)',
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-      }}
-    >
-      <Card style={{ width: 360, backdropFilter: 'blur(4px)', background: 'rgba(255,255,255,0.88)' }} title={
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <img src="/icon.png" alt="logo" style={{ width: 24, height: 24, borderRadius: 4 }} />
-          <span>Any Gateway 登录</span>
-        </div>
-      }>
-        <Form form={form} onSubmit={handleSubmit} layout="vertical">
-          <Form.Item
-            field="username"
-            label="AD 用户名"
-            rules={[{ required: true, message: '请输入域账号' }]}
-          >
-            <Input placeholder="请输入域账号" autoComplete="username" />
-          </Form.Item>
-          <Form.Item
-            field="password"
-            label="密码"
-            rules={[{ required: true, message: '请输入密码' }]}
-          >
-            <Input.Password placeholder="请输入密码" autoComplete="current-password" />
-          </Form.Item>
-          <Form.Item>
-            <Button type="primary" htmlType="submit" loading={loading} long>
-              登录
-            </Button>
-          </Form.Item>
-        </Form>
-      </Card>
+    <div className="ag-login-page">
+      <div className="ag-login-pattern" />
+      <main className="ag-login-shell">
+        <section className="ag-login-brand" aria-label="Any Gateway">
+          <div className="ag-login-logo">
+            <img src="/icon.png" alt="Any Gateway" />
+          </div>
+          <h1>Any Gateway</h1>
+          <p>AI Infrastructure Security</p>
+        </section>
+
+        <Card className="ag-login-card" title={
+          <div>
+            <span>欢迎回来</span>
+            <p>安全访问企业 AI 网关</p>
+          </div>
+        }>
+          <Form form={form} onSubmit={handleSubmit} layout="vertical">
+            <Form.Item
+              field="username"
+              label="AD 用户名"
+              rules={[{ required: true, message: '请输入域账号' }]}
+            >
+              <Input prefix={<IconUser />} placeholder="请输入域账号" autoComplete="username" />
+            </Form.Item>
+            <Form.Item
+              field="password"
+              label="密码"
+              rules={[{ required: true, message: '请输入密码' }]}
+            >
+              <Input.Password
+                prefix={<IconLock />}
+                placeholder="请输入密码"
+                autoComplete="current-password"
+              />
+            </Form.Item>
+            <Form.Item>
+              <Button type="primary" htmlType="submit" loading={loading} long>
+                登录
+              </Button>
+            </Form.Item>
+          </Form>
+        </Card>
+      </main>
     </div>
   )
 }

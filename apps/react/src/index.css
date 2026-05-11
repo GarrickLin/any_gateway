@@ -363,6 +363,158 @@ a:hover {
   background: var(--ag-primary-soft);
 }
 
+.ag-login-page {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 32px 20px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 18% 18%, rgba(0, 82, 204, 0.1), transparent 34%),
+    radial-gradient(circle at 82% 74%, rgba(123, 38, 0, 0.08), transparent 32%),
+    var(--ag-surface);
+}
+
+.ag-login-page::before {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background:
+    linear-gradient(90deg, rgba(248, 249, 251, 0.92), rgba(248, 249, 251, 0.68)),
+    url("/background.png") center / cover no-repeat;
+  opacity: 0.36;
+  pointer-events: none;
+}
+
+.ag-login-pattern {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(195, 198, 214, 0.16) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(195, 198, 214, 0.16) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: radial-gradient(circle at center, black 0%, transparent 74%);
+  pointer-events: none;
+}
+
+.ag-login-shell {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(100%, 480px);
+}
+
+.ag-login-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 32px;
+  text-align: center;
+}
+
+.ag-login-brand h1 {
+  margin: 0;
+  color: var(--ag-on-surface);
+  font-size: 38px;
+  font-weight: 800;
+  line-height: 1.12;
+}
+
+.ag-login-brand p {
+  margin: 9px 0 0;
+  color: var(--ag-outline);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.4;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.ag-login-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 62px;
+  height: 62px;
+  margin-bottom: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.54);
+  border-radius: var(--ag-radius-lg);
+  background: var(--ag-primary);
+  box-shadow: 0 20px 44px rgba(0, 61, 155, 0.2);
+}
+
+.ag-login-logo img {
+  display: block;
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+}
+
+body .ag-login-card.arco-card {
+  width: min(100%, 420px);
+  border: 1px solid rgba(195, 198, 214, 0.32);
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 34px 70px rgba(0, 61, 155, 0.12);
+  backdrop-filter: blur(16px);
+}
+
+.ag-login-card .arco-card-header {
+  padding: 28px 32px 12px;
+  border-bottom: 0;
+}
+
+.ag-login-card .arco-card-header-title {
+  color: var(--ag-on-surface);
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.ag-login-card .arco-card-header-title p {
+  margin: 7px 0 0;
+  color: var(--ag-on-surface-variant);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.ag-login-card .arco-card-body {
+  padding: 12px 32px 32px;
+}
+
+.ag-login-card .arco-form-label-item {
+  color: var(--ag-outline);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ag-login-card .arco-input-inner-wrapper {
+  min-height: 46px;
+  border-color: transparent;
+  background: var(--ag-surface-container);
+}
+
+.ag-login-card .arco-input-prefix {
+  color: var(--ag-outline);
+}
+
+.ag-login-card .arco-input-inner-wrapper:focus-within .arco-input-prefix {
+  color: var(--ag-primary);
+}
+
+.ag-login-card .arco-btn-primary {
+  min-height: 46px;
+  border-radius: var(--ag-radius);
+  font-size: 15px;
+  font-weight: 800;
+}
+
 body .arco-card {
   border: 1px solid rgba(195, 198, 214, 0.35);
   border-radius: var(--ag-radius-lg);
@@ -541,5 +693,25 @@ pre code {
 
   .ag-filter-panel {
     padding: 16px;
+  }
+
+  .ag-login-page {
+    padding: 24px 16px;
+  }
+
+  .ag-login-brand {
+    margin-bottom: 24px;
+  }
+
+  .ag-login-brand h1 {
+    font-size: 32px;
+  }
+
+  .ag-login-card .arco-card-header {
+    padding: 24px 24px 10px;
+  }
+
+  .ag-login-card .arco-card-body {
+    padding: 10px 24px 24px;
   }
 }
