@@ -31,8 +31,8 @@ interface MessagesCache {
 const preStyle: React.CSSProperties = {
   margin: 0, padding: '10px 12px',
   fontSize: 12, lineHeight: 1.6,
-  whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-  overflowX: 'auto',
+  whiteSpace: 'pre', wordBreak: 'normal',
+  overflowWrap: 'normal', overflowX: 'auto',
 }
 
 const RenderBlock: React.FC<{ block: ContentBlock }> = ({ block }) => {
@@ -279,7 +279,7 @@ const Logs: React.FC = () => {
 
       <div className="ag-filter-panel ag-logs-filter">
         <Row gutter={16}>
-          <Col span={8}>
+          <Col xs={24} sm={24} md={12} lg={8}>
             <RangePicker
               style={{ width: '100%' }}
               defaultValue={[dayjs(), dayjs()]}
@@ -288,13 +288,13 @@ const Logs: React.FC = () => {
               }
             />
           </Col>
-          <Col span={4}>
+          <Col xs={24} sm={12} md={6} lg={4}>
             <Input
               placeholder="模型名称"
               onChange={(v) => setFilters((f: any) => ({ ...f, model: v || undefined }))}
             />
           </Col>
-          <Col span={4}>
+          <Col xs={24} sm={12} md={6} lg={4}>
             <Select
               placeholder="状态码"
               allowClear
@@ -308,14 +308,14 @@ const Logs: React.FC = () => {
             />
           </Col>
           {isAdmin && (
-            <Col span={4}>
+            <Col xs={24} sm={12} md={6} lg={4}>
               <Input
                 placeholder="用户名"
                 onChange={(v) => setFilters((f: any) => ({ ...f, username: v || undefined }))}
               />
             </Col>
           )}
-          <Col span={4}>
+          <Col xs={24} sm={12} md={6} lg={4}>
             <Button type="primary" onClick={handleSearch} className="ag-logs-search-button">查询</Button>
           </Col>
         </Row>
@@ -327,6 +327,7 @@ const Logs: React.FC = () => {
           data={data}
           loading={loading}
           rowKey="id"
+          scroll={{ x: 1500 }}
           onExpand={handleExpand}
           pagination={{
             current: pagination.current,
