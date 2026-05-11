@@ -29,8 +29,7 @@ interface MessagesCache {
 }
 
 const preStyle: React.CSSProperties = {
-  margin: 0, padding: '6px 10px',
-  background: '#f0f0f0', borderRadius: 4,
+  margin: 0, padding: '10px 12px',
   fontSize: 12, lineHeight: 1.6,
   whiteSpace: 'pre-wrap', wordBreak: 'break-all',
   overflowX: 'auto',
@@ -43,20 +42,20 @@ const RenderBlock: React.FC<{ block: ContentBlock }> = ({ block }) => {
 
     case 'thinking':
       return (
-        <details style={{ margin: '4px 0' }}>
-          <summary style={{ cursor: 'pointer', color: '#8c8c8c', fontSize: 12 }}>thinking</summary>
-          <pre style={{ ...preStyle, background: '#fafafa', color: '#595959', marginTop: 4 }}>{block.thinking}</pre>
+        <details className="ag-log-reasoning">
+          <summary>thinking</summary>
+          <pre className="ag-log-pre ag-log-pre-muted" style={preStyle}>{block.thinking}</pre>
         </details>
       )
 
     case 'tool_use':
       return (
-        <div style={{ margin: '4px 0', border: '1px solid #d9d9d9', borderRadius: 4, overflow: 'hidden' }}>
-          <div style={{ padding: '3px 10px', background: '#e6f4ff', fontSize: 12, fontWeight: 600, color: '#1677ff', display: 'flex', gap: 6 }}>
+        <div className="ag-log-tool-block ag-log-tool-use">
+          <div className="ag-log-tool-header">
             <span>tool_use</span>
-            <span style={{ color: '#262626' }}>{block.name}</span>
+            <span className="ag-log-tool-name">{block.name}</span>
           </div>
-          <pre style={preStyle}>{JSON.stringify(block.input, null, 2)}</pre>
+          <pre className="ag-log-pre" style={preStyle}>{JSON.stringify(block.input, null, 2)}</pre>
         </div>
       )
 
@@ -66,11 +65,11 @@ const RenderBlock: React.FC<{ block: ContentBlock }> = ({ block }) => {
         : Array.isArray(c) ? c.map(b => b.text ?? '').join('\n')
         : ''
       return (
-        <div style={{ margin: '4px 0', border: '1px solid #d9d9d9', borderRadius: 4, overflow: 'hidden' }}>
-          <div style={{ padding: '3px 10px', background: '#f6ffed', fontSize: 12, fontWeight: 600, color: '#389e0d' }}>
+        <div className="ag-log-tool-block ag-log-tool-result">
+          <div className="ag-log-tool-header">
             tool_result
           </div>
-          <pre style={preStyle}>{text || '（空）'}</pre>
+          <pre className="ag-log-pre" style={preStyle}>{text || '（空）'}</pre>
         </div>
       )
     }
@@ -95,19 +94,19 @@ const RenderMessage: React.FC<{ msg: MessageEntry }> = ({ msg }) => {
   return (
     <>
       {msg.reasoning_content && (
-        <details style={{ margin: '4px 0 8px' }}>
-          <summary style={{ cursor: 'pointer', color: '#8c8c8c', fontSize: 12 }}>reasoning</summary>
-          <pre style={{ ...preStyle, background: '#fafafa', color: '#595959', marginTop: 4 }}>{msg.reasoning_content}</pre>
+        <details className="ag-log-reasoning ag-log-message-reasoning">
+          <summary>reasoning</summary>
+          <pre className="ag-log-pre ag-log-pre-muted" style={preStyle}>{msg.reasoning_content}</pre>
         </details>
       )}
       <RenderContent content={msg.content} />
       {toolCalls && (
-        <div style={{ marginTop: 8 }}>
+        <div className="ag-log-tool-markdown">
           <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{toolCalls}</ReactMarkdown>
         </div>
       )}
       {msg.tool_call_id && (
-        <Typography.Text type="secondary" style={{ display: 'block', marginTop: 6, fontSize: 12 }}>
+        <Typography.Text type="secondary" className="ag-log-tool-id">
           tool_call_id: {msg.tool_call_id}
         </Typography.Text>
       )}
@@ -118,17 +117,9 @@ const RenderMessage: React.FC<{ msg: MessageEntry }> = ({ msg }) => {
 const RenderReasoning: React.FC<{ reasoning: string }> = ({ reasoning }) => {
   if (!reasoning) return null
   return (
-    <details style={{ marginBottom: 8 }}>
-      <summary style={{ cursor: 'pointer', color: '#8c8c8c', fontSize: 12 }}>Reasoning</summary>
-      <div style={{
-        background: '#fafafa',
-        color: '#595959',
-        marginTop: 4,
-        maxHeight: 360,
-        overflow: 'auto',
-        padding: '6px 10px',
-        borderRadius: 4,
-      }}>
+    <details className="ag-log-reasoning ag-log-response-reasoning">
+      <summary>Reasoning</summary>
+      <div className="ag-log-reasoning-body">
         <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{reasoning}</ReactMarkdown>
       </div>
     </details>
@@ -138,15 +129,7 @@ const RenderReasoning: React.FC<{ reasoning: string }> = ({ reasoning }) => {
 const RenderWarnings: React.FC<{ warnings: string[]; maxTokens?: number }> = ({ warnings, maxTokens }) => {
   if (warnings.length === 0) return null
   return (
-    <div style={{
-      background: '#fff7e6',
-      border: '1px solid #ffd591',
-      color: '#ad6800',
-      padding: '6px 10px',
-      borderRadius: 4,
-      marginBottom: 8,
-      fontSize: 12,
-    }}>
+    <div className="ag-log-warnings">
       {warnings.map((warning, index) => (
         <div key={index}>
           {warning}
@@ -283,11 +266,18 @@ const Logs: React.FC = () => {
   ]
 
   return (
-    <div>
-      <Typography.Title heading={5} style={{ marginBottom: 16 }}>请求日志</Typography.Title>
+    <div className="ag-page ag-logs-page">
+      <div className="ag-page-header">
+        <div>
+          <p className="ag-page-eyebrow">Audit Trail</p>
+          <h1 className="ag-page-title">Request Logs</h1>
+          <p className="ag-page-description">
+            Review gateway traffic, token usage, upstream status, and captured request or response payloads for audit investigations.
+          </p>
+        </div>
+      </div>
 
-      {/* 过滤区 */}
-      <div style={{ background: '#fff', padding: 16, marginBottom: 16, borderRadius: 4 }}>
+      <div className="ag-filter-panel ag-logs-filter">
         <Row gutter={16}>
           <Col span={8}>
             <RangePicker
@@ -326,144 +316,139 @@ const Logs: React.FC = () => {
             </Col>
           )}
           <Col span={4}>
-            <Button type="primary" onClick={handleSearch}>查询</Button>
+            <Button type="primary" onClick={handleSearch} className="ag-logs-search-button">查询</Button>
           </Col>
         </Row>
       </div>
 
-      <Table
-        columns={columns}
-        data={data}
-        loading={loading}
-        rowKey="id"
-        onExpand={handleExpand}
-        pagination={{
-          current: pagination.current,
-          pageSize: pagination.pageSize,
-          total: pagination.total,
-          showTotal: true,
-          onChange: handlePageChange,
-        }}
-        expandedRowRender={(record) => {
-          const cache = messagesCache[record.id]
-          if (!cache || cache.loading) {
-            return (
-              <div style={{ padding: 16, textAlign: 'center' }}>
-                <Spin tip="加载消息内容..." />
-              </div>
-            )
-          }
-          if (cache.error) {
-            return (
-              <div style={{ padding: 8, color: '#f53f3f' }}>
-                {cache.error === '消息文件不存在' ? '（暂无消息记录）' : `错误：${cache.error}`}
-              </div>
-            )
-          }
-          const messages = parseMessages(cache.data?.request_body)
-          const responseParts = parseResponseParts(cache.data?.response_body)
-          const maxTokens = parseRequestMaxTokens(cache.data?.request_body)
-          const requestUrl = cache.data?.request_url
-          const rawRequestJson = (() => {
-            if (!cache.data?.request_body) return ''
-            try { return JSON.stringify(JSON.parse(cache.data.request_body), null, 2) } catch { return cache.data.request_body }
-          })()
-          return (
-            <div style={{ padding: '8px 16px' }}>
-              {isAdmin && requestUrl && (
-                <div style={{ marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <Typography.Text bold style={{ flexShrink: 0 }}>目标 URL：</Typography.Text>
-                  <Typography.Text style={{ fontFamily: 'monospace', fontSize: 13, wordBreak: 'break-all' }}>
-                    {requestUrl}
-                  </Typography.Text>
+      <div className="ag-data-panel ag-logs-data-panel">
+        <Table
+          columns={columns}
+          data={data}
+          loading={loading}
+          rowKey="id"
+          onExpand={handleExpand}
+          pagination={{
+            current: pagination.current,
+            pageSize: pagination.pageSize,
+            total: pagination.total,
+            showTotal: true,
+            onChange: handlePageChange,
+          }}
+          expandedRowRender={(record) => {
+            const cache = messagesCache[record.id]
+            if (!cache || cache.loading) {
+              return (
+                <div className="ag-log-expanded ag-log-expanded-state">
+                  <Spin tip="加载消息内容..." />
                 </div>
-              )}
-              {messages.length > 0 ? (
-                <>
-                  <Typography.Text bold style={{ display: 'block', marginBottom: 8 }}>请求消息</Typography.Text>
-                  {messages.map((msg, i) => (
-                    <div key={i} style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                      <Tag color={roleColor[msg.role] ?? 'gray'} style={{ flexShrink: 0, marginTop: 2 }}>
-                        {msg.role}
-                      </Tag>
-                      <div style={{
-                        flex: 1, maxHeight: 400, overflow: 'auto',
-                        background: roleBgColor[msg.role] ?? '#f7f8fa',
-                        padding: '4px 10px', borderRadius: 4,
-                        fontSize: 13, lineHeight: 1.6,
-                      }}>
-                        <RenderMessage msg={msg} />
-                      </div>
-                    </div>
-                  ))}
-                </>
-              ) : (
-                <Typography.Text type="secondary">（无请求消息）</Typography.Text>
-              )}
-              {rawRequestJson && (
-                <Collapse style={{ marginTop: 12 }} bordered={false}>
-                  <Collapse.Item
-                    header={
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <span>Raw Request JSON</span>
-                        <Button
-                          size="mini"
-                          style={{ marginLeft: 8 }}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            navigator.clipboard.writeText(rawRequestJson)
-                              .then(() => Message.success('已复制'))
-                              .catch(() => Message.error('复制失败'))
-                          }}
-                        >
-                          复制
-                        </Button>
-                      </div>
-                    }
-                    name="raw"
-                    style={{ background: '#fafafa', borderRadius: 4, fontSize: 13 }}
-                  >
-                    <pre style={{
-                      margin: 0, padding: '8px 12px', maxHeight: 400, overflow: 'auto',
-                      background: '#f7f8fa', borderRadius: 4,
-                      fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-                    }}>
-                      {rawRequestJson}
-                    </pre>
-                  </Collapse.Item>
-                </Collapse>
-              )}
-              {(responseParts.warnings.length > 0 || responseParts.reasoning || responseParts.content || responseParts.toolCalls || responseParts.errors) && (
-                <>
-                  <Typography.Text bold style={{ display: 'block', margin: '12px 0 8px' }}>响应内容</Typography.Text>
-                  <div style={{
-                    maxHeight: 400, overflow: 'auto',
-                    background: '#f0f9eb', padding: '6px 16px', borderRadius: 4,
-                    fontSize: 13, lineHeight: 1.6,
-                  }}>
-                    <RenderWarnings warnings={responseParts.warnings} maxTokens={maxTokens} />
-                    <RenderReasoning reasoning={responseParts.reasoning} />
-                    {responseParts.content && (
-                      <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{responseParts.content}</ReactMarkdown>
-                    )}
-                    {responseParts.toolCalls && (
-                      <div style={{ marginTop: responseParts.content ? 8 : 0 }}>
-                        <Typography.Text bold style={{ display: 'block', marginBottom: 4 }}>工具调用</Typography.Text>
-                        <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{responseParts.toolCalls}</ReactMarkdown>
-                      </div>
-                    )}
-                    {responseParts.errors && (
-                      <pre style={{ ...preStyle, background: '#fff2f0', color: '#cf1322', marginTop: 8 }}>
-                        {responseParts.errors}
-                      </pre>
-                    )}
+              )
+            }
+            if (cache.error) {
+              return (
+                <div className="ag-log-expanded ag-log-expanded-error">
+                  {cache.error === '消息文件不存在' ? '（暂无消息记录）' : `错误：${cache.error}`}
+                </div>
+              )
+            }
+            const messages = parseMessages(cache.data?.request_body)
+            const responseParts = parseResponseParts(cache.data?.response_body)
+            const maxTokens = parseRequestMaxTokens(cache.data?.request_body)
+            const requestUrl = cache.data?.request_url
+            const rawRequestJson = (() => {
+              if (!cache.data?.request_body) return ''
+              try { return JSON.stringify(JSON.parse(cache.data.request_body), null, 2) } catch { return cache.data.request_body }
+            })()
+            return (
+              <div className="ag-log-expanded">
+                {isAdmin && requestUrl && (
+                  <div className="ag-log-target">
+                    <Typography.Text bold className="ag-log-target-label">目标 URL：</Typography.Text>
+                    <Typography.Text className="ag-log-target-url">
+                      {requestUrl}
+                    </Typography.Text>
                   </div>
-                </>
-              )}
-            </div>
-          )
-        }}
-      />
+                )}
+                <section className="ag-log-section ag-log-request-section">
+                  <div className="ag-log-section-header">
+                    <Typography.Text bold>请求消息</Typography.Text>
+                  </div>
+                  {messages.length > 0 ? (
+                    <div className="ag-log-message-list">
+                      {messages.map((msg, i) => (
+                        <div key={i} className="ag-log-message-row">
+                          <Tag color={roleColor[msg.role] ?? 'gray'} className="ag-log-role-tag">
+                            {msg.role}
+                          </Tag>
+                          <div className="ag-log-message-body" style={{ background: roleBgColor[msg.role] ?? '#f7f8fa' }}>
+                            <RenderMessage msg={msg} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <Typography.Text type="secondary">（无请求消息）</Typography.Text>
+                  )}
+                </section>
+                {rawRequestJson && (
+                  <Collapse className="ag-log-raw-collapse" bordered={false}>
+                    <Collapse.Item
+                      header={
+                        <div className="ag-log-collapse-header">
+                          <span>Raw Request JSON</span>
+                          <Button
+                            size="mini"
+                            className="ag-log-copy-button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              navigator.clipboard.writeText(rawRequestJson)
+                                .then(() => Message.success('已复制'))
+                                .catch(() => Message.error('复制失败'))
+                            }}
+                          >
+                            复制
+                          </Button>
+                        </div>
+                      }
+                      name="raw"
+                      className="ag-log-raw-item"
+                    >
+                      <pre className="ag-log-pre ag-log-raw-pre" style={preStyle}>
+                        {rawRequestJson}
+                      </pre>
+                    </Collapse.Item>
+                  </Collapse>
+                )}
+                {(responseParts.warnings.length > 0 || responseParts.reasoning || responseParts.content || responseParts.toolCalls || responseParts.errors) && (
+                  <section className="ag-log-section ag-log-response-section">
+                    <div className="ag-log-section-header">
+                      <Typography.Text bold>响应内容</Typography.Text>
+                    </div>
+                    <div className="ag-log-response">
+                      <RenderWarnings warnings={responseParts.warnings} maxTokens={maxTokens} />
+                      <RenderReasoning reasoning={responseParts.reasoning} />
+                      {responseParts.content && (
+                        <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{responseParts.content}</ReactMarkdown>
+                      )}
+                      {responseParts.toolCalls && (
+                        <div className={responseParts.content ? 'ag-log-response-tools ag-log-response-tools-spaced' : 'ag-log-response-tools'}>
+                          <Typography.Text bold>工具调用</Typography.Text>
+                          <ReactMarkdown remarkPlugins={mdPlugins} components={mdComponents}>{responseParts.toolCalls}</ReactMarkdown>
+                        </div>
+                      )}
+                      {responseParts.errors && (
+                        <pre className="ag-log-pre ag-log-error-pre" style={preStyle}>
+                          {responseParts.errors}
+                        </pre>
+                      )}
+                    </div>
+                  </section>
+                )}
+              </div>
+            )
+          }}
+        />
+      </div>
     </div>
   )
 }
