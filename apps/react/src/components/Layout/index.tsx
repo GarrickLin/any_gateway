@@ -2,7 +2,6 @@ import React, { useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   Layout as ArcoLayout,
-  Menu,
   Button,
   Tooltip,
 } from '@arco-design/web-react'
@@ -21,7 +20,6 @@ import {
 import { useAuthStore } from '../../store/auth'
 
 const { Sider, Header, Content } = ArcoLayout
-const MenuItem = Menu.Item
 
 const pageTitles: Record<string, string> = {
   dashboard: 'Dashboard',
@@ -51,6 +49,25 @@ const Layout: React.FC = () => {
 
   const isAdmin = role === 'admin' || role === 'superadmin'
   const isSuperAdmin = role === 'superadmin'
+  const initials = username
+    ? username
+      .split(/[._@\s-]+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join('')
+    : 'U'
+  const navItems: Array<{ key: string; label: string; icon: React.ReactNode; visible?: boolean }> = [
+    { key: 'dashboard', label: '仪表板', icon: <IconDashboard /> },
+    { key: 'apikeys', label: 'API 密钥', icon: <IconLock /> },
+    { key: 'chat', label: '对话', icon: <IconMessage /> },
+    { key: 'logs', label: '日志', icon: <IconList /> },
+    { key: 'groups', label: '分组', icon: <IconApps />, visible: isAdmin },
+    { key: 'channels', label: '渠道', icon: <IconSettings />, visible: isAdmin },
+    { key: 'prices', label: '价格管理', icon: <IconStorage />, visible: isAdmin },
+    { key: 'vouchers', label: '消费券', icon: <IconTag />, visible: isAdmin },
+    { key: 'users', label: '用户管理', icon: <IconUser />, visible: isSuperAdmin },
+  ]
 
   return (
     <ArcoLayout className="ag-shell">
@@ -59,12 +76,18 @@ const Layout: React.FC = () => {
         collapsed={collapsed}
         onCollapse={setCollapsed}
         collapsible
-        width={200}
+        width={256}
         collapsedWidth={64}
       >
         <div className="ag-brand">
           <div className="ag-brand-mark">
-            <img src="/icon.png" alt="" />
+            <span
+              className="material-symbols-outlined"
+              style={{ fontVariationSettings: "'FILL' 1" }}
+              aria-hidden="true"
+            >
+              hub
+            </span>
           </div>
           {!collapsed && (
             <div>
@@ -73,45 +96,40 @@ const Layout: React.FC = () => {
             </div>
           )}
         </div>
-        <Menu
-          className="ag-nav"
-          selectedKeys={[currentKey]}
-          onClickMenuItem={(key) => navigate(`/${key}`)}
-        >
-          <MenuItem key="dashboard">
-            <IconDashboard /> 仪表板
-          </MenuItem>
-          <MenuItem key="apikeys">
-            <IconLock /> API 密钥
-          </MenuItem>
-          <MenuItem key="chat">
-            <IconMessage /> 对话
-          </MenuItem>
-          <MenuItem key="logs">
-            <IconList /> 日志
-          </MenuItem>
-          {isAdmin && (
-            <>
-              <MenuItem key="groups">
-                <IconApps /> 分组
-              </MenuItem>
-              <MenuItem key="channels">
-                <IconSettings /> 渠道
-              </MenuItem>
-              <MenuItem key="prices">
-                <IconStorage /> 价格管理
-              </MenuItem>
-              <MenuItem key="vouchers">
-                <IconTag /> 消费券
-              </MenuItem>
-            </>
-          )}
-          {isSuperAdmin && (
-            <MenuItem key="users">
-              <IconUser /> 用户管理
-            </MenuItem>
-          )}
-        </Menu>
+        <nav className="ag-sidebar-nav">
+          {navItems
+            .filter((item) => item.visible !== false)
+            .map((item) => {
+              const selected = item.key === currentKey
+              const button = (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={selected ? 'ag-sidebar-nav-item ag-sidebar-nav-item-active' : 'ag-sidebar-nav-item'}
+                  aria-current={selected ? 'page' : undefined}
+                  onClick={() => navigate(`/${item.key}`)}
+                >
+                  {item.icon}
+                  {!collapsed && <span>{item.label}</span>}
+                </button>
+              )
+
+              return collapsed ? (
+                <Tooltip key={item.key} content={item.label} position="right">
+                  {button}
+                </Tooltip>
+              ) : button
+            })}
+        </nav>
+        {!collapsed && (
+          <div className="ag-sidebar-user">
+            <div className="ag-sidebar-avatar">{initials}</div>
+            <div className="ag-sidebar-user-meta">
+              <div className="ag-sidebar-username">{username || 'User'}</div>
+              <div className="ag-sidebar-role">{role || 'Authenticated'}</div>
+            </div>
+          </div>
+        )}
       </Sider>
       <ArcoLayout>
         <Header className="ag-topbar">

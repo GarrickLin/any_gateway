@@ -298,6 +298,7 @@ const Channels: React.FC = () => {
       dataIndex: 'name',
       key: 'name',
       width: 160,
+      render: (name: string) => <span style={{ fontWeight: 700 }}>{name}</span>,
     },
     {
       title: 'Provider',
@@ -314,6 +315,9 @@ const Channels: React.FC = () => {
       key: 'base_url',
       width: 240,
       ellipsis: true,
+      render: (url: string) => (
+        <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--ag-outline)' }}>{url}</span>
+      ),
     },
     {
       title: 'Weight',
@@ -321,6 +325,7 @@ const Channels: React.FC = () => {
       key: 'weight',
       width: 80,
       align: 'center',
+      render: (w: number) => <strong>{w}</strong>,
     },
     {
       title: '状态',
@@ -329,7 +334,7 @@ const Channels: React.FC = () => {
       width: 90,
       align: 'center',
       render: (enabled: boolean) => (
-        <Tag color={enabled ? 'green' : 'gray'}>{enabled ? 'Enabled' : 'Disabled'}</Tag>
+        <Tag color={enabled ? 'green' : 'red'}>{enabled ? 'Enabled' : 'Disabled'}</Tag>
       ),
     },
     {
@@ -340,14 +345,15 @@ const Channels: React.FC = () => {
       align: 'center',
       render: (models: string | null, record: Channel) => {
         const count = parseModelsCount(models, record.model_mapping)
-        if (count === 0) return <span style={{ color: '#999' }}>0</span>
+        if (count === 0) return <Tag color="gray">0</Tag>
         return (
-          <Typography.Text
-            style={{ color: 'rgb(var(--arcoblue-6))', cursor: 'pointer' }}
+          <Tag
+            color="arcoblue"
+            style={{ cursor: 'pointer' }}
             onClick={() => setViewModelsChannel(record)}
           >
             {count}
-          </Typography.Text>
+          </Tag>
         )
       },
     },
@@ -385,27 +391,26 @@ const Channels: React.FC = () => {
   ]
 
   return (
-    <div className="ag-page">
+    <div className="ag-page ag-workbench-page">
       <div className="ag-page-header">
         <div>
           <p className="ag-page-eyebrow">Routing</p>
           <h1 className="ag-page-title">Channels</h1>
           <p className="ag-page-description">配置上游渠道、模型映射、权重与启用状态。</p>
         </div>
-        <Button type="primary" icon={<IconPlus />} onClick={openCreate}>
-          新建 Channel
-        </Button>
+        <div className="ag-header-actions">
+          <Button type="primary" icon={<IconPlus />} onClick={openCreate}>
+            新建 Channel
+          </Button>
+        </div>
       </div>
 
-      <div className="ag-data-panel">
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: 16,
-          }}
-        >
+      <div className="ag-data-panel ag-workbench-panel ag-table-panel">
+        <div className="ag-panel-header">
+          <div>
+            <h2 className="ag-panel-title">渠道路由</h2>
+            <p className="ag-panel-subtitle">维护上游 Provider、模型列表、权重和模型别名映射</p>
+          </div>
         </div>
 
         <Table

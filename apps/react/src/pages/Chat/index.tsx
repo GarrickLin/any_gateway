@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import {
-  Select, Button, Input, Typography, Space, Message
+  Select, Button, Input, Typography, Message
 } from '@arco-design/web-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -298,168 +298,149 @@ const Chat: React.FC = () => {
   }
 
   return (
-    <div
-      className="ag-page ag-chat-page"
-      style={{ maxWidth: 'none', display: 'flex', flexDirection: 'row', gap: 16, height: 'calc(100vh - 120px)' }}
-    >
-      {/* 左侧对话区 */}
-      <div className="ag-data-panel ag-chat-main" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 120px)' }}>
-        {/* 工具栏 */}
-        <Space className="ag-chat-toolbar" style={{ marginBottom: 12 }}>
-          <Select
-            placeholder="选择 API Key"
-            options={keys.map(k => ({ label: k.name, value: k.key }))}
-            onChange={(v) => setSelectedKey(v)}
-            style={{ width: 200 }}
-          />
-          <Select
-            placeholder="按 Provider 筛选"
-            allowClear
-            options={providers.map(p => ({ label: p, value: p }))}
-            onChange={(v) => {
-              setSelectedProvider(v)
-              setSelectedModel('')
-            }}
-            style={{ width: 160 }}
-          />
-          <Select
-            placeholder="选择模型"
-            value={selectedModel || undefined}
-            options={filteredModels.map(m => ({ label: m, value: m }))}
-            onChange={setSelectedModel}
-            showSearch
-            style={{ width: 240 }}
-          />
-        </Space>
-
-        {/* 对话历史 */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px' }}>
-          {history.map((msg, i) => (
-            <div
-              key={i}
-              style={{
-                display: 'flex',
-                justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                marginBottom: 12,
+    <div className="ag-page ag-chat-page">
+      <div className="ag-chat-layout">
+        {/* 左侧对话区 */}
+        <div className="ag-data-panel ag-chat-main">
+          {/* 工具栏 */}
+          <div className="ag-chat-toolbar">
+            <Select
+              placeholder="选择 API Key"
+              options={keys.map(k => ({ label: k.name, value: k.key }))}
+              onChange={(v) => setSelectedKey(v)}
+              style={{ width: 200 }}
+            />
+            <Select
+              placeholder="按 Provider 筛选"
+              allowClear
+              options={providers.map(p => ({ label: p, value: p }))}
+              onChange={(v) => {
+                setSelectedProvider(v)
+                setSelectedModel('')
               }}
-            >
+              style={{ width: 160 }}
+            />
+            <Select
+              placeholder="选择模型"
+              value={selectedModel || undefined}
+              options={filteredModels.map(m => ({ label: m, value: m }))}
+              onChange={setSelectedModel}
+              showSearch
+              style={{ width: 240 }}
+            />
+          </div>
+
+          {/* 对话历史 */}
+          <div className="ag-chat-messages">
+            {history.length === 0 && (
+              <div className="ag-chat-empty">
+                <div className="ag-chat-empty-icon">💬</div>
+                <p>选择 API Key 和模型，开始对话</p>
+              </div>
+            )}
+            {history.map((msg, i) => (
               <div
-                style={{
-                  maxWidth: '70%',
-                  padding: '8px 12px',
-                  borderRadius: 8,
-                  background: msg.role === 'user' ? '#165dff' : '#f2f3f5',
-                  color: msg.role === 'user' ? '#fff' : '#1d2129',
-                  whiteSpace: msg.role === 'user' ? 'pre-wrap' : undefined,
-                  wordBreak: 'break-word',
-                }}
+                key={i}
+                className={`ag-chat-row ${msg.role === 'user' ? 'ag-chat-row-user' : 'ag-chat-row-assistant'}`}
               >
-                {msg.role === 'user' ? (
-                  msg.content
-                ) : (
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={{
-                      p: ({ children }) => (
-                        <p className="md-p">{children}</p>
-                      ),
-                      pre: ({ children }) => (
-                        <pre style={{
-                          background: '#282c34',
-                          color: '#abb2bf',
-                          borderRadius: 6,
-                          padding: '10px 14px',
-                          overflowX: 'auto',
-                          fontSize: 13,
-                          margin: '6px 0',
-                        }}>{children}</pre>
-                      ),
-                      code: ({ children, className, node: _node, ...props }) => {
-                        const isBlock = /language-/.test(className || '')
-                        return isBlock ? (
-                          <code style={{ fontFamily: 'monospace' }} className={className} {...props}>{children}</code>
-                        ) : (
-                          <code style={{
-                            background: '#e8e8e8',
-                            borderRadius: 3,
-                            padding: '1px 5px',
-                            fontSize: 13,
-                            fontFamily: 'monospace',
-                          }} className={className} {...props}>{children}</code>
-                        )
-                      },
-                      a: ({ children, ...props }) => (
-                        <a style={{ color: '#165dff' }} target="_blank" rel="noreferrer" {...props}>{children}</a>
-                      ),
-                      ul: ({ children }) => (
-                        <ul style={{ paddingLeft: 20, margin: '4px 0' }}>{children}</ul>
-                      ),
-                      ol: ({ children }) => (
-                        <ol style={{ paddingLeft: 20, margin: '4px 0' }}>{children}</ol>
-                      ),
-                      li: ({ children }) => (
-                        <li style={{ marginBottom: 2 }}>{children}</li>
-                      ),
-                      blockquote: ({ children }) => (
-                        <blockquote style={{
-                          borderLeft: '3px solid #c9cdd4',
-                          margin: '6px 0',
-                          paddingLeft: 12,
-                          color: '#6b7280',
-                        }}>{children}</blockquote>
-                      ),
-                      h1: ({ children }) => <h3 style={{ fontSize: '1.1em', fontWeight: 600, margin: '8px 0 4px' }}>{children}</h3>,
-                      h2: ({ children }) => <h4 style={{ fontSize: '1em', fontWeight: 600, margin: '6px 0 4px' }}>{children}</h4>,
-                      h3: ({ children }) => <strong style={{ display: 'block', margin: '4px 0' }}>{children}</strong>,
-                    }}
-                  >
-                    {msg.content || (sending ? '▌' : '')}
-                  </ReactMarkdown>
+                {msg.role === 'assistant' && (
+                  <div className="ag-chat-avatar ag-chat-avatar-ai">AI</div>
+                )}
+                <div className={`ag-chat-bubble ${msg.role === 'user' ? 'ag-chat-bubble-user' : 'ag-chat-bubble-assistant'}`}>
+                  {msg.role === 'user' ? (
+                    msg.content
+                  ) : (
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        p: ({ children }) => (
+                          <p className="md-p">{children}</p>
+                        ),
+                        pre: ({ children }) => (
+                          <pre className="ag-chat-code-block">{children}</pre>
+                        ),
+                        code: ({ children, className, node, ...props }) => {
+                          void node
+                          const isBlock = /language-/.test(className || '')
+                          return isBlock ? (
+                            <code style={{ fontFamily: 'monospace' }} className={className} {...props}>{children}</code>
+                          ) : (
+                            <code className="ag-chat-inline-code" {...props}>{children}</code>
+                          )
+                        },
+                        a: ({ children, ...props }) => (
+                          <a className="ag-chat-link" target="_blank" rel="noreferrer" {...props}>{children}</a>
+                        ),
+                        ul: ({ children }) => (
+                          <ul style={{ paddingLeft: 20, margin: '4px 0' }}>{children}</ul>
+                        ),
+                        ol: ({ children }) => (
+                          <ol style={{ paddingLeft: 20, margin: '4px 0' }}>{children}</ol>
+                        ),
+                        li: ({ children }) => (
+                          <li style={{ marginBottom: 2 }}>{children}</li>
+                        ),
+                        blockquote: ({ children }) => (
+                          <blockquote className="ag-chat-blockquote">{children}</blockquote>
+                        ),
+                        h1: ({ children }) => <h3 style={{ fontSize: '1.1em', fontWeight: 600, margin: '8px 0 4px' }}>{children}</h3>,
+                        h2: ({ children }) => <h4 style={{ fontSize: '1em', fontWeight: 600, margin: '6px 0 4px' }}>{children}</h4>,
+                        h3: ({ children }) => <strong style={{ display: 'block', margin: '4px 0' }}>{children}</strong>,
+                      }}
+                    >
+                      {msg.content || (sending ? '▌' : '')}
+                    </ReactMarkdown>
+                  )}
+                </div>
+                {msg.role === 'user' && (
+                  <div className="ag-chat-avatar ag-chat-avatar-user">U</div>
                 )}
               </div>
-            </div>
-          ))}
-          <div ref={bottomRef} />
+            ))}
+            <div ref={bottomRef} />
+          </div>
+
+          {/* 输入框 */}
+          <div className="ag-chat-input-area">
+            <Input.TextArea
+              value={input}
+              onChange={setInput}
+              placeholder="输入消息，Enter 发送（Shift+Enter 换行）"
+              autoSize={{ minRows: 1, maxRows: 4 }}
+              onPressEnter={(e) => {
+                if (!e.shiftKey) {
+                  e.preventDefault()
+                  handleSend()
+                }
+              }}
+              className="ag-chat-input"
+            />
+            <Button type="primary" loading={sending} onClick={handleSend} className="ag-chat-send-btn">
+              发送
+            </Button>
+          </div>
         </div>
 
-        {/* 输入框 */}
-        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-          <Input.TextArea
-            value={input}
-            onChange={setInput}
-            placeholder="输入消息，Enter 发送（Shift+Enter 换行）"
-            autoSize={{ minRows: 1, maxRows: 4 }}
-            onPressEnter={(e) => {
-              if (!e.shiftKey) {
-                e.preventDefault()
-                handleSend()
-              }
-            }}
-            style={{ flex: 1 }}
-          />
-          <Button type="primary" loading={sending} onClick={handleSend}>发送</Button>
+        {/* 右侧 curl 面板 */}
+        <div className="ag-data-panel ag-chat-side">
+          <div className="ag-chat-side-header">
+            <Typography.Text style={{ color: '#f2f4f8', fontWeight: 600, fontSize: 13 }}>
+              {isAnthropic ? 'curl — Anthropic Messages' : 'curl — OpenAI Chat'}
+            </Typography.Text>
+            <Button
+              size="mini"
+              onClick={() => {
+                navigator.clipboard.writeText(curlCommand)
+                Message.success('已复制')
+              }}
+            >
+              复制
+            </Button>
+          </div>
+          <pre className="ag-chat-curl-code">
+            {curlCommand}
+          </pre>
         </div>
-      </div>
-
-      {/* 右侧 curl 面板 */}
-      <div className="ag-data-panel ag-chat-side" style={{ width: 360, padding: 16, display: 'flex', flexDirection: 'column', background: '#1e1e1e' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-          <Typography.Text style={{ color: '#fff' }}>
-            {isAnthropic ? 'curl（Anthropic Messages）' : 'curl（OpenAI Chat）'}
-          </Typography.Text>
-          <Button
-            size="mini"
-            onClick={() => {
-              navigator.clipboard.writeText(curlCommand)
-              Message.success('已复制')
-            }}
-          >
-            复制
-          </Button>
-        </div>
-        <pre style={{ flex: 1, color: '#a9dc76', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all', overflowY: 'auto', margin: 0 }}>
-          {curlCommand}
-        </pre>
       </div>
     </div>
   )

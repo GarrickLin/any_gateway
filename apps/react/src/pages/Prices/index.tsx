@@ -106,16 +106,20 @@ const Prices: React.FC = () => {
     : data
 
   const columns = [
-    { title: '模型名称', dataIndex: 'model_name' },
+    {
+      title: '模型名称',
+      dataIndex: 'model_name',
+      render: (v: string) => <span style={{ fontWeight: 700 }}>{v}</span>,
+    },
     {
       title: '计价单位',
       dataIndex: 'unit',
-      render: (v: string) => <Tag>{UNIT_LABELS[v] ?? v}</Tag>,
+      render: (v: string) => <Tag color="arcoblue">{UNIT_LABELS[v] ?? v}</Tag>,
     },
     {
       title: '单价 (USD)',
       dataIndex: 'price_per_unit',
-      render: (v: number) => v.toFixed(6),
+      render: (v: number) => <strong style={{ fontFamily: 'monospace', fontSize: 12 }}>${v.toFixed(6)}</strong>,
     },
     {
       title: '操作',
@@ -131,14 +135,14 @@ const Prices: React.FC = () => {
   ]
 
   return (
-    <div className="ag-page">
+    <div className="ag-page ag-workbench-page">
       <div className="ag-page-header">
         <div>
           <p className="ag-page-eyebrow">Billing</p>
           <h1 className="ag-page-title">Prices</h1>
           <p className="ag-page-description">配置模型与请求计价，影响成本统计与扣费计算。</p>
         </div>
-        <Space>
+        <Space className="ag-header-actions">
           <Input
             placeholder="搜索模型名"
             value={searchText}
@@ -150,8 +154,12 @@ const Prices: React.FC = () => {
         </Space>
       </div>
 
-      <div className="ag-data-panel">
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+      <div className="ag-data-panel ag-workbench-panel ag-table-panel">
+        <div className="ag-panel-header">
+          <div>
+            <h2 className="ag-panel-title">价格配置</h2>
+            <p className="ag-panel-subtitle">按模型或请求配置全局计价规则</p>
+          </div>
         </div>
 
         <Table columns={columns} data={filtered} loading={loading} rowKey="id" pagination={{ pageSize: 20, showTotal: true }} />

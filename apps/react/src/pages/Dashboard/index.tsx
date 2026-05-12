@@ -371,6 +371,7 @@ const Dashboard: React.FC = () => {
       dataIndex: 'date',
       sorter: true,
       sortOrder: usageTable.sortBy === 'date' ? toArcoSortOrder(usageTable.sortOrder) : undefined,
+      render: (v: string) => <span style={{ fontWeight: 600 }}>{v}</span>,
     },
     ...(isAdmin
       ? [{
@@ -378,7 +379,9 @@ const Dashboard: React.FC = () => {
           dataIndex: 'username',
           sorter: true,
           sortOrder: usageTable.sortBy === 'username' ? toArcoSortOrder(usageTable.sortOrder) : undefined,
-          render: (value: string | null) => value ?? '—',
+          render: (value: string | null) => value
+            ? <span style={{ fontWeight: 700 }}>{value}</span>
+            : <span style={{ color: 'var(--ag-outline)' }}>—</span>,
         }]
       : []),
     {
@@ -386,46 +389,54 @@ const Dashboard: React.FC = () => {
       dataIndex: 'model',
       sorter: true,
       sortOrder: usageTable.sortBy === 'model' ? toArcoSortOrder(usageTable.sortOrder) : undefined,
-      render: (value: string | null) => value ?? '未知',
+      render: (value: string | null) => value ? <Tag color="arcoblue">{value}</Tag> : <Tag color="gray">未知</Tag>,
+      width: 240,
     },
     {
       title: '输入 Token',
       dataIndex: 'input_tokens',
       sorter: true,
       sortOrder: usageTable.sortBy === 'input_tokens' ? toArcoSortOrder(usageTable.sortOrder) : undefined,
+      render: (v: number) => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{v?.toLocaleString()}</span>,
     },
     {
       title: '输出 Token',
       dataIndex: 'output_tokens',
       sorter: true,
       sortOrder: usageTable.sortBy === 'output_tokens' ? toArcoSortOrder(usageTable.sortOrder) : undefined,
+      render: (v: number) => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{v?.toLocaleString()}</span>,
     },
     {
       title: 'Cache 读取',
       dataIndex: 'cache_read_tokens',
       sorter: true,
       sortOrder: usageTable.sortBy === 'cache_read_tokens' ? toArcoSortOrder(usageTable.sortOrder) : undefined,
+      render: (v: number) => <span style={{ fontFamily: 'monospace', fontSize: 12, color: v > 0 ? undefined : 'var(--ag-outline)' }}>{v > 0 ? v.toLocaleString() : '-'}</span>,
     },
     {
       title: 'Cache 写入',
       dataIndex: 'cache_creation_tokens',
       sorter: true,
       sortOrder: usageTable.sortBy === 'cache_creation_tokens' ? toArcoSortOrder(usageTable.sortOrder) : undefined,
+      render: (v: number) => <span style={{ fontFamily: 'monospace', fontSize: 12, color: v > 0 ? undefined : 'var(--ag-outline)' }}>{v > 0 ? v.toLocaleString() : '-'}</span>,
     },
     {
       title: '请求数',
       dataIndex: 'request_count',
       sorter: true,
       sortOrder: usageTable.sortBy === 'request_count' ? toArcoSortOrder(usageTable.sortOrder) : undefined,
+      render: (v: number) => <strong style={{ fontFamily: 'monospace' }}>{v}</strong>,
     },
     {
       title: '费用 (USD)',
       dataIndex: 'total_cost_usd',
       sorter: true,
       sortOrder: usageTable.sortBy === 'total_cost_usd' ? toArcoSortOrder(usageTable.sortOrder) : undefined,
-      render: (value: number) => value.toFixed(4),
+      render: (value: number) => <strong style={{ fontFamily: 'monospace', fontSize: 12 }}>${value.toFixed(4)}</strong>,
     },
   ]
+
+  const modelMaxCount = Math.max(...modelRows.map((r) => r.request_count ?? 0), 1)
 
   const modelColumns = [
     {
@@ -433,13 +444,22 @@ const Dashboard: React.FC = () => {
       dataIndex: 'model',
       sorter: true,
       sortOrder: modelTable.sortBy === 'model' ? toArcoSortOrder(modelTable.sortOrder) : undefined,
-      render: (value: string | null) => value ?? '未知',
+      render: (value: string | null) => value ? <Tag color="arcoblue">{value}</Tag> : <Tag color="gray">未知</Tag>,
+      width: 300,
     },
     {
       title: '请求数',
       dataIndex: 'request_count',
       sorter: true,
       sortOrder: modelTable.sortBy === 'request_count' ? toArcoSortOrder(modelTable.sortOrder) : undefined,
+      render: (v: number) => (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <strong style={{ fontFamily: 'monospace', fontSize: 12, minWidth: 52, textAlign: 'right' }}>{v?.toLocaleString()}</strong>
+          <div className="ag-bar-track">
+            <div className="ag-bar-fill" style={{ width: `${Math.round((v / modelMaxCount) * 100)}%` }} />
+          </div>
+        </div>
+      ),
     },
   ]
 
@@ -649,7 +669,7 @@ const Dashboard: React.FC = () => {
                   dataIndex: 'group_name',
                   render: (value: string, row: RateLimitRow) => (
                     <Space size="small">
-                      {value}
+                      <span style={{ fontWeight: 700 }}>{value}</span>
                       {row.is_all_visible && <Tag color="green" size="small">全员</Tag>}
                     </Space>
                   ),
@@ -658,18 +678,30 @@ const Dashboard: React.FC = () => {
                   title: '类型',
                   dataIndex: 'limit_type',
                   render: (value: string) => (
-                    { request_limit: '请求数', token_limit: 'Token', quota_limit: '金额' }[value] ?? value
+                    <Tag color="arcoblue">
+                      {{ request_limit: '请求数', token_limit: 'Token', quota_limit: '金额' }[value] ?? value}
+                    </Tag>
                   ),
                 },
                 {
                   title: '窗口',
                   dataIndex: 'window_sec',
                   render: (value: number) => (
-                    value >= 86400 ? `${value / 86400}天` : value >= 3600 ? `${value / 3600}小时` : `${Math.round(value / 60)}分钟`
+                    <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                      {value >= 86400 ? `${value / 86400}天` : value >= 3600 ? `${value / 3600}小时` : `${Math.round(value / 60)}分钟`}
+                    </span>
                   ),
                 },
-                { title: '当前', dataIndex: 'current' },
-                { title: '上限', dataIndex: 'limit' },
+                {
+                  title: '当前',
+                  dataIndex: 'current',
+                  render: (v: number) => <strong style={{ fontFamily: 'monospace' }}>{v}</strong>,
+                },
+                {
+                  title: '上限',
+                  dataIndex: 'limit',
+                  render: (v: number) => <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--ag-outline)' }}>{v}</span>,
+                },
                 {
                   title: '剩余',
                   dataIndex: 'remaining_pct',

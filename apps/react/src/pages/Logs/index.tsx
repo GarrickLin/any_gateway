@@ -159,15 +159,15 @@ const mdComponents = {
   h2: ({ children }: React.HTMLAttributes<HTMLHeadingElement>) => <h4 style={{ fontSize: '1em', fontWeight: 600, margin: '6px 0 4px' }}>{children}</h4>,
   h3: ({ children }: React.HTMLAttributes<HTMLHeadingElement>) => <strong style={{ display: 'block', margin: '4px 0' }}>{children}</strong>,
   table: ({ children }: React.HTMLAttributes<HTMLTableElement>) => (
-    <div style={{ overflowX: 'auto', margin: '8px 0' }}>
-      <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12 }}>{children}</table>
+    <div className="ag-md-table">
+      <table>{children}</table>
     </div>
   ),
   th: ({ children }: React.HTMLAttributes<HTMLTableCellElement>) => (
-    <th style={{ border: '1px solid #d9d9d9', padding: '4px 8px', background: '#f0f0f0', textAlign: 'left' }}>{children}</th>
+    <th>{children}</th>
   ),
   td: ({ children }: React.HTMLAttributes<HTMLTableCellElement>) => (
-    <td style={{ border: '1px solid #d9d9d9', padding: '4px 8px' }}>{children}</td>
+    <td>{children}</td>
   ),
 }
 
@@ -229,40 +229,94 @@ const Logs: React.FC = () => {
     return 'green'
   }
 
+  const statusLabel = (status: number) => {
+    if (!status) return '-'
+    if (status === 200) return '200 OK'
+    if (status === 429) return '429 Rate'
+    if (status >= 500) return `${status} Error`
+    if (status >= 400) return `${status} Fail`
+    return String(status)
+  }
+
   const columns = [
-    { title: 'Request ID', dataIndex: 'id', render: (v: string) => v?.slice(0, 8) + '...' },
-    ...(isAdmin ? [{ title: '用户名', dataIndex: 'username', render: (v: string) => v || '-' }] : []),
-    { title: 'API Key', dataIndex: 'token_name', render: (v: string) => v || '-' },
-    { title: '模型', dataIndex: 'model' },
-    { title: '输入 Token', dataIndex: 'input_tokens' },
-    { title: '输出 Token', dataIndex: 'output_tokens' },
+    {
+      title: 'Request ID',
+      dataIndex: 'id',
+      render: (v: string) => <span className="ag-log-request-id">{v?.slice(0, 8)}...</span>,
+      width: 118,
+    },
+    ...(isAdmin ? [{
+      title: 'Username',
+      dataIndex: 'username',
+      render: (v: string) => <span className="ag-log-strong-cell">{v || '-'}</span>,
+      width: 108,
+    }] : []),
+    {
+      title: 'API Key',
+      dataIndex: 'token_name',
+      render: (v: string) => (
+        <span className="ag-log-muted-mono">
+          {v && v.length > 16 ? `${v.slice(0, 12)}...` : (v || '-')}
+        </span>
+      ),
+      width: 92,
+    },
+    {
+      title: 'Model',
+      dataIndex: 'model',
+      render: (v: string) => v ? <Tag color="arcoblue">{v}</Tag> : '-',
+      width: 180,
+    },
+    {
+      title: 'Tokens (I/O)',
+      render: (_: unknown, row: any) => (
+        <span className="ag-log-token-cell">
+          <strong>{row.input_tokens ?? 0}</strong>
+          <span> / {row.output_tokens ?? 0}</span>
+        </span>
+      ),
+      align: 'right' as const,
+    },
     {
       title: 'Cache 读取',
       dataIndex: 'cache_read_tokens',
-      render: (v: number) => v > 0 ? v : '-',
+      render: (v: number) => <span className="ag-log-mono-cell">{v > 0 ? v : '-'}</span>,
+      align: 'right' as const,
     },
     {
       title: 'Cache 写入',
       dataIndex: 'cache_creation_tokens',
-      render: (v: number) => v > 0 ? v : '-',
+      render: (v: number) => <span className="ag-log-mono-cell">{v > 0 ? v : '-'}</span>,
+      align: 'right' as const,
     },
-    { title: '耗时(ms)', dataIndex: 'duration_ms', render: (v: number) => v?.toFixed(0) },
     {
-      title: '费用(USD)',
+      title: 'Dur. (ms)',
+      dataIndex: 'duration_ms',
+      render: (v: number) => <span className="ag-log-mono-cell">{v?.toFixed(0) ?? '-'}</span>,
+      align: 'right' as const,
+    },
+    {
+      title: 'Cost (USD)',
       dataIndex: 'cost_usd',
-      render: (v: number) => v > 0 ? `$${v.toFixed(6)}` : '-',
+      render: (v: number) => <span className="ag-log-cost-cell">{v > 0 ? `$${v.toFixed(6)}` : '-'}</span>,
+      align: 'right' as const,
     },
     {
-      title: '套餐覆盖',
+      title: 'Package',
       dataIndex: 'covered_by_package',
       render: (v: boolean) => v ? <Tag color="purple">套餐</Tag> : <Tag color="gray">计费</Tag>,
     },
     {
-      title: '状态码',
+      title: 'Status',
       dataIndex: 'status',
-      render: (v: number) => <Tag color={statusColor(v)}>{v || '-'}</Tag>
+      render: (v: number) => <Tag color={statusColor(v)}>{statusLabel(v)}</Tag>,
+      align: 'center' as const,
     },
-    { title: '时间', dataIndex: 'created_at', render: (v: string) => v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-' },
+    {
+      title: 'Time',
+      dataIndex: 'created_at',
+      render: (v: string) => <span className="ag-log-time-cell">{v ? dayjs(v).format('HH:mm:ss') : '-'}</span>,
+    },
   ]
 
   return (
@@ -280,39 +334,51 @@ const Logs: React.FC = () => {
       <div className="ag-filter-panel ag-logs-filter">
         <Row gutter={16}>
           <Col xs={24} sm={24} md={12} lg={8}>
-            <RangePicker
-              style={{ width: '100%' }}
-              defaultValue={[dayjs(), dayjs()]}
-              onChange={(dateStrings) =>
-                setFilters((f: any) => ({ ...f, start_date: dateStrings?.[0] || undefined, end_date: dateStrings?.[1] || undefined }))
-              }
-            />
+            <div className="ag-filter-field">
+              <label>Date Range</label>
+              <RangePicker
+                style={{ width: '100%' }}
+                defaultValue={[dayjs(), dayjs()]}
+                onChange={(dateStrings) =>
+                  setFilters((f: any) => ({ ...f, start_date: dateStrings?.[0] || undefined, end_date: dateStrings?.[1] || undefined }))
+                }
+              />
+            </div>
           </Col>
           <Col xs={24} sm={12} md={6} lg={4}>
-            <Input
-              placeholder="模型名称"
-              onChange={(v) => setFilters((f: any) => ({ ...f, model: v || undefined }))}
-            />
+            <div className="ag-filter-field">
+              <label>Model Name</label>
+              <Input
+                placeholder="Search model..."
+                onChange={(v) => setFilters((f: any) => ({ ...f, model: v || undefined }))}
+              />
+            </div>
           </Col>
           <Col xs={24} sm={12} md={6} lg={4}>
-            <Select
-              placeholder="状态码"
-              allowClear
-              options={[
-                { label: '200 成功', value: 200 },
-                { label: '4xx 客户端错误', value: 400 },
-                { label: '5xx 服务端错误', value: 500 },
-              ]}
-              onChange={(v) => setFilters((f: any) => ({ ...f, status: v }))}
-              style={{ width: '100%' }}
-            />
+            <div className="ag-filter-field">
+              <label>Status Code</label>
+              <Select
+                placeholder="All Statuses"
+                allowClear
+                options={[
+                  { label: '200 OK', value: 200 },
+                  { label: '4xx Client Error', value: 400 },
+                  { label: '5xx Server Error', value: 500 },
+                ]}
+                onChange={(v) => setFilters((f: any) => ({ ...f, status: v }))}
+                style={{ width: '100%' }}
+              />
+            </div>
           </Col>
           {isAdmin && (
             <Col xs={24} sm={12} md={6} lg={4}>
-              <Input
-                placeholder="用户名"
-                onChange={(v) => setFilters((f: any) => ({ ...f, username: v || undefined }))}
-              />
+              <div className="ag-filter-field">
+                <label>Username</label>
+                <Input
+                  placeholder="Search user..."
+                  onChange={(v) => setFilters((f: any) => ({ ...f, username: v || undefined }))}
+                />
+              </div>
             </Col>
           )}
           <Col xs={24} sm={12} md={6} lg={4}>

@@ -57,7 +57,11 @@ const AdminTab: React.FC = () => {
   }
 
   const columns = [
-    { title: '用户名', dataIndex: 'username' },
+    {
+      title: '用户名',
+      dataIndex: 'username',
+      render: (v: string) => <span style={{ fontWeight: 700 }}>{v}</span>,
+    },
     {
       title: '角色',
       dataIndex: 'role',
@@ -67,8 +71,16 @@ const AdminTab: React.FC = () => {
         </Tag>
       )
     },
-    { title: '提权人', dataIndex: 'created_by', render: (v: string) => v || 'system' },
-    { title: '提权时间', dataIndex: 'created_at', render: (v: string) => v?.slice(0, 19) },
+    {
+      title: '提权人',
+      dataIndex: 'created_by',
+      render: (v: string) => <span style={{ color: 'var(--ag-outline)', fontSize: 12 }}>{v || 'system'}</span>,
+    },
+    {
+      title: '提权时间',
+      dataIndex: 'created_at',
+      render: (v: string) => <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--ag-outline)' }}>{v?.slice(0, 10)}</span>,
+    },
     {
       title: '操作',
       render: (_: any, row: any) => (
@@ -90,9 +102,12 @@ const AdminTab: React.FC = () => {
   ]
 
   return (
-    <div className="ag-data-panel">
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <div />
+    <div className="ag-data-panel ag-workbench-panel ag-table-panel">
+      <div className="ag-panel-header">
+        <div>
+          <h2 className="ag-panel-title">管理员权限</h2>
+          <p className="ag-panel-subtitle">管理拥有后台访问权限的用户与角色级别</p>
+        </div>
         <Button type="primary" onClick={() => setVisible(true)}>提权用户</Button>
       </div>
 
@@ -226,12 +241,15 @@ const UserGroupTab: React.FC = () => {
       title: '用户名',
       dataIndex: 'username',
       key: 'username',
+      render: (v: string) => <span style={{ fontWeight: 700 }}>{v}</span>,
     },
     {
       title: '首次登录',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (val: string) => val ? new Date(val).toLocaleString('zh-CN') : '-',
+      render: (val: string) => val
+        ? <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--ag-outline)' }}>{new Date(val).toLocaleDateString('zh-CN')}</span>
+        : <span style={{ color: 'var(--ag-outline)' }}>-</span>,
     },
     {
       title: '操作',
@@ -270,11 +288,12 @@ const UserGroupTab: React.FC = () => {
   ]
 
   return (
-    <div className="ag-data-panel">
-      <div style={{ marginBottom: 16 }}>
-        <Typography.Text type="secondary">
-          显示所有 AD 用户，点击"管理分组"可查看并配置用户所属分组。
-        </Typography.Text>
+    <div className="ag-data-panel ag-workbench-panel ag-table-panel">
+      <div className="ag-panel-header">
+        <div>
+          <h2 className="ag-panel-title">用户分组</h2>
+          <p className="ag-panel-subtitle">显示所有 AD 用户，点击"管理分组"可查看并配置用户所属分组。</p>
+        </div>
       </div>
 
       <Table
@@ -339,7 +358,7 @@ const UserGroupTab: React.FC = () => {
 // ========================
 const Users: React.FC = () => {
   return (
-    <div className="ag-page">
+    <div className="ag-page ag-workbench-page">
       <div className="ag-page-header">
         <div>
           <p className="ag-page-eyebrow">Identity</p>
@@ -348,7 +367,7 @@ const Users: React.FC = () => {
         </div>
       </div>
 
-      <Tabs defaultActiveTab="admin">
+      <Tabs defaultActiveTab="admin" className="ag-users-tabs">
         <TabPane key="admin" title="管理员权限">
           <AdminTab />
         </TabPane>

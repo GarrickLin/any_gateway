@@ -39,18 +39,22 @@ const Login: React.FC = () => {
       <main className="ag-login-shell">
         <section className="ag-login-brand" aria-label="Any Gateway">
           <div className="ag-login-logo">
-            <img src="/icon.png" alt="Any Gateway" />
+            <span
+              className="material-symbols-outlined"
+              style={{ fontVariationSettings: "'FILL' 1" }}
+              aria-hidden="true"
+            >
+              hub
+            </span>
           </div>
           <h1>Any Gateway</h1>
           <p>AI Infrastructure Security</p>
         </section>
 
-        <Card className="ag-login-card" title={
-          <div>
-            <span>欢迎回来</span>
-            <p>安全访问企业 AI 网关</p>
+        <Card className="ag-login-card">
+          <div className="ag-login-card-heading">
+            <h2>欢迎回来</h2>
           </div>
-        }>
           <Form form={form} onSubmit={handleSubmit} layout="vertical">
             <Form.Item
               field="username"

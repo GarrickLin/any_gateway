@@ -300,15 +300,31 @@ const Groups: React.FC = () => {
   ]
 
   const columns = [
-    { title: '名称', dataIndex: 'name' },
-    { title: 'Priority', dataIndex: 'priority' },
-    { title: '费率倍数', dataIndex: 'multiplier' },
+    {
+      title: '名称',
+      dataIndex: 'name',
+      render: (v: string) => <span style={{ fontWeight: 700 }}>{v}</span>,
+    },
+    {
+      title: 'Priority',
+      dataIndex: 'priority',
+      render: (v: number) => <strong style={{ fontFamily: 'monospace' }}>{v}</strong>,
+    },
+    {
+      title: '费率倍数',
+      dataIndex: 'multiplier',
+      render: (v: number) => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{v}×</span>,
+    },
     {
       title: '全员可见',
       dataIndex: 'all_visible',
       render: (v: boolean) => v ? <Tag color="green">是</Tag> : <Tag color="gray">否</Tag>
     },
-    { title: '创建时间', dataIndex: 'created_at', render: (v: string) => v?.slice(0, 19) },
+    {
+      title: '创建时间',
+      dataIndex: 'created_at',
+      render: (v: string) => <span style={{ color: 'var(--ag-outline)', fontSize: 11, fontFamily: 'monospace' }}>{v?.slice(0, 10)}</span>,
+    },
     {
       title: '操作',
       render: (_: any, row: any) => (
@@ -326,18 +342,24 @@ const Groups: React.FC = () => {
   ]
 
   return (
-    <div className="ag-page">
+    <div className="ag-page ag-workbench-page">
       <div className="ag-page-header">
         <div>
           <p className="ag-page-eyebrow">Access Policy</p>
           <h1 className="ag-page-title">Groups</h1>
           <p className="ag-page-description">管理分组、限流规则、渠道授权与分组价格。</p>
         </div>
-        <Button type="primary" onClick={() => handleOpen()}>新建 Group</Button>
+        <div className="ag-header-actions">
+          <Button type="primary" onClick={() => handleOpen()}>新建 Group</Button>
+        </div>
       </div>
 
-      <div className="ag-data-panel">
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+      <div className="ag-data-panel ag-workbench-panel ag-table-panel">
+        <div className="ag-panel-header">
+          <div>
+            <h2 className="ag-panel-title">分组策略</h2>
+            <p className="ag-panel-subtitle">集中维护用户访问策略、渠道授权、限流和价格覆盖</p>
+          </div>
         </div>
 
         <Table columns={columns} data={data} loading={loading} rowKey="id" />

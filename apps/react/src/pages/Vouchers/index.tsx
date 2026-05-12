@@ -72,18 +72,20 @@ const Vouchers: React.FC = () => {
       title: '券码',
       dataIndex: 'code',
       render: (v: string) => (
-        <Typography.Text copyable style={{ fontFamily: 'monospace' }}>{v}</Typography.Text>
+        <Typography.Text copyable style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--ag-primary)', fontWeight: 600 }}>{v}</Typography.Text>
       ),
     },
     {
       title: '金额 (USD)',
       dataIndex: 'amount_usd',
-      render: (v: number) => `$${v.toFixed(2)}`,
+      render: (v: number) => <strong style={{ fontFamily: 'monospace' }}>${v.toFixed(2)}</strong>,
     },
     {
       title: '过期时间',
       dataIndex: 'expires_at',
-      render: (v: string) => v ? v.slice(0, 10) : '—',
+      render: (v: string) => v
+        ? <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--ag-outline)' }}>{v.slice(0, 10)}</span>
+        : <Tag color="gray">永不过期</Tag>,
     },
     {
       title: '状态',
@@ -95,7 +97,9 @@ const Vouchers: React.FC = () => {
     {
       title: '使用人',
       dataIndex: 'used_by',
-      render: (v: string) => v ?? '—',
+      render: (v: string) => v
+        ? <span style={{ fontWeight: 700 }}>{v}</span>
+        : <span style={{ color: 'var(--ag-outline)' }}>—</span>,
     },
     {
       title: '操作',
@@ -110,20 +114,26 @@ const Vouchers: React.FC = () => {
   ]
 
   return (
-    <div className="ag-page">
+    <div className="ag-page ag-workbench-page">
       <div className="ag-page-header">
         <div>
           <p className="ag-page-eyebrow">Credit Grants</p>
           <h1 className="ag-page-title">Vouchers</h1>
           <p className="ag-page-description">生成和管理消费券，用于为账号充值或发放额度。</p>
         </div>
-        <Button type="primary" icon={<IconPlus />} onClick={() => { form.resetFields(); setVisible(true) }}>
-          生成消费券
-        </Button>
+        <div className="ag-header-actions">
+          <Button type="primary" icon={<IconPlus />} onClick={() => { form.resetFields(); setVisible(true) }}>
+            生成消费券
+          </Button>
+        </div>
       </div>
 
-      <div className="ag-data-panel">
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+      <div className="ag-data-panel ag-workbench-panel ag-table-panel">
+        <div className="ag-panel-header">
+          <div>
+            <h2 className="ag-panel-title">消费券列表</h2>
+            <p className="ag-panel-subtitle">追踪额度发放、领取状态和过期时间</p>
+          </div>
         </div>
 
         <Table columns={columns} data={data} loading={loading} rowKey="id" />

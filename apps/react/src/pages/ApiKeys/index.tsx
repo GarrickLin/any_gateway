@@ -105,12 +105,16 @@ const ApiKeys: React.FC = () => {
   }
 
   const columns = [
-    { title: '名称', dataIndex: 'name' },
+    {
+      title: '名称',
+      dataIndex: 'name',
+      render: (v: string) => <span style={{ fontWeight: 700 }}>{v}</span>,
+    },
     {
       title: 'Key',
       dataIndex: 'key',
       render: (key: string) => (
-        <Typography.Text copyable={{ text: key }}>
+        <Typography.Text copyable={{ text: key }} style={{ fontFamily: 'monospace', color: 'var(--ag-outline)', fontSize: 12 }}>
           {key?.slice(0, 8)}****
         </Typography.Text>
       )
@@ -119,12 +123,16 @@ const ApiKeys: React.FC = () => {
       title: '绑定分组',
       dataIndex: 'group_id',
       render: (gid: string | null) =>
-        gid ? <Tag color="arcoblue">{groupMap[gid] ?? gid}</Tag> : <span style={{ color: '#999' }}>—</span>
+        gid ? <Tag color="arcoblue">{groupMap[gid] ?? gid}</Tag> : <Tag color="gray">未绑定</Tag>
     },
     {
       title: '额度',
-      render: (_: unknown, row: Token) =>
-        `${row.used_usd?.toFixed(4)} / ${row.quota_usd === 0 ? '无限制' : row.quota_usd + ' USD'}`
+      render: (_: unknown, row: Token) => (
+        <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
+          <strong>{row.used_usd?.toFixed(4)}</strong>
+          <span style={{ color: 'var(--ag-outline)' }}> / {row.quota_usd === 0 ? '∞' : `$${row.quota_usd}`}</span>
+        </span>
+      ),
     },
     {
       title: '状态',
@@ -136,7 +144,7 @@ const ApiKeys: React.FC = () => {
     {
       title: '创建时间',
       dataIndex: 'created_at',
-      render: (v: string) => v?.slice(0, 19)
+      render: (v: string) => <span style={{ color: 'var(--ag-outline)', fontSize: 11, fontFamily: 'monospace' }}>{v?.slice(0, 10)}</span>
     },
     {
       title: '操作',
@@ -163,18 +171,24 @@ const ApiKeys: React.FC = () => {
   ]
 
   return (
-    <div className="ag-page">
+    <div className="ag-page ag-workbench-page">
       <div className="ag-page-header">
         <div>
           <p className="ag-page-eyebrow">Access Control</p>
           <h1 className="ag-page-title">API Keys</h1>
           <p className="ag-page-description">管理用户密钥、额度、分组绑定与冻结状态。</p>
         </div>
-        <Button type="primary" onClick={() => setCreateVisible(true)}>创建 API Key</Button>
+        <div className="ag-header-actions">
+          <Button type="primary" onClick={() => setCreateVisible(true)}>创建 API Key</Button>
+        </div>
       </div>
 
-      <div className="ag-data-panel">
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+      <div className="ag-data-panel ag-workbench-panel ag-table-panel">
+        <div className="ag-panel-header">
+          <div>
+            <h2 className="ag-panel-title">密钥列表</h2>
+            <p className="ag-panel-subtitle">查看密钥归属、额度、分组绑定与冻结状态</p>
+          </div>
         </div>
 
         <Table columns={columns} data={data} loading={loading} rowKey="id" />
