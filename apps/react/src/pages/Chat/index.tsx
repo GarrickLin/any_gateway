@@ -305,7 +305,7 @@ const Chat: React.FC = () => {
       {/* 左侧对话区 */}
       <div className="ag-data-panel ag-chat-main" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 120px)' }}>
         {/* 工具栏 */}
-        <Space style={{ marginBottom: 12 }}>
+        <Space className="ag-chat-toolbar" style={{ marginBottom: 12 }}>
           <Select
             placeholder="选择 API Key"
             options={keys.map(k => ({ label: k.name, value: k.key }))}

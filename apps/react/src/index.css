@@ -1,5 +1,11 @@
 :root {
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ag-font-body: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ag-font-headline: "Manrope", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ag-font-label: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+:root {
+  font-family: var(--ag-font-body);
   color: var(--ag-on-surface);
   background: var(--ag-surface);
   font-synthesis: none;
@@ -43,6 +49,21 @@ body {
   min-height: 100vh;
   color: var(--ag-on-surface);
   background: var(--ag-surface);
+  font-family: var(--ag-font-body);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.arco-typography-title,
+.ag-page-title,
+.ag-panel-title,
+.ag-login-brand h1,
+.ag-login-card .arco-card-header-title {
+  font-family: var(--ag-font-headline);
 }
 
 a {
@@ -154,6 +175,7 @@ a:hover {
   border-radius: var(--ag-radius);
   color: var(--ag-on-surface-variant);
   font-weight: 650;
+  font-family: var(--ag-font-label);
 }
 
 .ag-nav .arco-menu-item:hover {
@@ -248,6 +270,7 @@ a:hover {
 
 .ag-chat-page {
   align-items: stretch;
+  padding-top: 10px;
 }
 
 .ag-chat-main {
@@ -257,6 +280,28 @@ a:hover {
 .ag-chat-side {
   flex: 0 0 360px;
   min-width: 0;
+}
+
+.ag-chat-page .ag-chat-side {
+  border-color: rgba(39, 45, 55, 0.92);
+  background: linear-gradient(180deg, #23272f 0%, #1b1f25 100%) !important;
+  color: #f2f4f8;
+}
+
+.ag-chat-page .ag-chat-side .arco-typography,
+.ag-chat-page .ag-chat-side .arco-button,
+.ag-chat-page .ag-chat-side .arco-icon {
+  color: inherit;
+}
+
+.ag-chat-page .ag-chat-side .arco-btn-secondary {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.ag-chat-page .ag-chat-side pre {
+  color: #c8d1e3;
+  background: transparent;
 }
 
 .ag-page-header {
@@ -275,6 +320,7 @@ a:hover {
   line-height: 1.4;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  font-family: var(--ag-font-label);
 }
 
 .ag-page-title {
@@ -291,6 +337,7 @@ a:hover {
   color: var(--ag-outline);
   font-size: 14px;
   line-height: 1.6;
+  font-family: var(--ag-font-body);
 }
 
 .ag-filter-panel,
@@ -331,6 +378,7 @@ a:hover {
   font-weight: 700;
   line-height: 1.4;
   text-transform: uppercase;
+  font-family: var(--ag-font-label);
 }
 
 .ag-stat-value {
@@ -830,6 +878,7 @@ body .arco-table-expanded-row .arco-table-td {
   justify-content: space-between;
   color: var(--ag-on-surface);
   font-size: 13px;
+  font-family: var(--ag-font-label);
 }
 
 .ag-log-message-list {
