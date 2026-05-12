@@ -304,6 +304,8 @@ const Logs: React.FC = () => {
     {
       title: 'Package',
       dataIndex: 'covered_by_package',
+      align: 'center' as const,
+      width: 90,
       render: (v: boolean) => v ? <Tag color="purple">套餐</Tag> : <Tag color="gray">计费</Tag>,
     },
     {
