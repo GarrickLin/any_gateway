@@ -246,6 +246,19 @@ a:hover {
   margin: 0 auto;
 }
 
+.ag-chat-page {
+  align-items: stretch;
+}
+
+.ag-chat-main {
+  min-width: 0;
+}
+
+.ag-chat-side {
+  flex: 0 0 360px;
+  min-width: 0;
+}
+
 .ag-page-header {
   display: flex;
   flex-wrap: wrap;
@@ -1065,6 +1078,16 @@ pre code {
 
   .ag-filter-panel {
     padding: 16px;
+  }
+
+  .ag-chat-page {
+    flex-direction: column;
+    height: auto !important;
+  }
+
+  .ag-chat-side {
+    flex: 1 1 auto;
+    width: 100% !important;
   }
 
   .ag-dashboard-filter-actions {

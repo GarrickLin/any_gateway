@@ -299,11 +299,11 @@ const Chat: React.FC = () => {
 
   return (
     <div
-      className="ag-page"
+      className="ag-page ag-chat-page"
       style={{ maxWidth: 'none', display: 'flex', flexDirection: 'row', gap: 16, height: 'calc(100vh - 120px)' }}
     >
       {/* 左侧对话区 */}
-      <div className="ag-data-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 120px)' }}>
+      <div className="ag-data-panel ag-chat-main" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 120px)' }}>
         {/* 工具栏 */}
         <Space style={{ marginBottom: 12 }}>
           <Select
@@ -442,7 +442,7 @@ const Chat: React.FC = () => {
       </div>
 
       {/* 右侧 curl 面板 */}
-      <div className="ag-data-panel" style={{ width: 360, padding: 16, display: 'flex', flexDirection: 'column', background: '#1e1e1e' }}>
+      <div className="ag-data-panel ag-chat-side" style={{ width: 360, padding: 16, display: 'flex', flexDirection: 'column', background: '#1e1e1e' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
           <Typography.Text style={{ color: '#fff' }}>
             {isAnthropic ? 'curl（Anthropic Messages）' : 'curl（OpenAI Chat）'}
