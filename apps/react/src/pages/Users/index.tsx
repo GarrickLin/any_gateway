@@ -340,7 +340,14 @@ const UserGroupTab: React.FC = () => {
 const Users: React.FC = () => {
   return (
     <div className="ag-page">
-      <Typography.Title heading={5} style={{ marginBottom: 16 }}>用户管理</Typography.Title>
+      <div className="ag-page-header">
+        <div>
+          <p className="ag-page-eyebrow">Identity</p>
+          <h1 className="ag-page-title">Users</h1>
+          <p className="ag-page-description">管理管理员角色与用户分组关系。</p>
+        </div>
+      </div>
+
       <Tabs defaultActiveTab="admin">
         <TabPane key="admin" title="管理员权限">
           <AdminTab />

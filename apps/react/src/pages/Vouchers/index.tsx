@@ -111,12 +111,19 @@ const Vouchers: React.FC = () => {
 
   return (
     <div className="ag-page">
+      <div className="ag-page-header">
+        <div>
+          <p className="ag-page-eyebrow">Credit Grants</p>
+          <h1 className="ag-page-title">Vouchers</h1>
+          <p className="ag-page-description">生成和管理消费券，用于为账号充值或发放额度。</p>
+        </div>
+        <Button type="primary" icon={<IconPlus />} onClick={() => { form.resetFields(); setVisible(true) }}>
+          生成消费券
+        </Button>
+      </div>
+
       <div className="ag-data-panel">
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-          <Typography.Title heading={5} style={{ margin: 0 }}>消费券管理</Typography.Title>
-          <Button type="primary" icon={<IconPlus />} onClick={() => { form.resetFields(); setVisible(true) }}>
-            生成消费券
-          </Button>
         </div>
 
         <Table columns={columns} data={data} loading={loading} rowKey="id" />

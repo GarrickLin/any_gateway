@@ -164,10 +164,17 @@ const ApiKeys: React.FC = () => {
 
   return (
     <div className="ag-page">
+      <div className="ag-page-header">
+        <div>
+          <p className="ag-page-eyebrow">Access Control</p>
+          <h1 className="ag-page-title">API Keys</h1>
+          <p className="ag-page-description">管理用户密钥、额度、分组绑定与冻结状态。</p>
+        </div>
+        <Button type="primary" onClick={() => setCreateVisible(true)}>创建 API Key</Button>
+      </div>
+
       <div className="ag-data-panel">
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-          <Typography.Title heading={5} style={{ margin: 0 }}>API Keys</Typography.Title>
-          <Button type="primary" onClick={() => setCreateVisible(true)}>创建 API Key</Button>
         </div>
 
         <Table columns={columns} data={data} loading={loading} rowKey="id" />

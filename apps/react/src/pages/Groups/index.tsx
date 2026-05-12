@@ -327,10 +327,17 @@ const Groups: React.FC = () => {
 
   return (
     <div className="ag-page">
+      <div className="ag-page-header">
+        <div>
+          <p className="ag-page-eyebrow">Access Policy</p>
+          <h1 className="ag-page-title">Groups</h1>
+          <p className="ag-page-description">管理分组、限流规则、渠道授权与分组价格。</p>
+        </div>
+        <Button type="primary" onClick={() => handleOpen()}>新建 Group</Button>
+      </div>
+
       <div className="ag-data-panel">
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-          <Typography.Title heading={5} style={{ margin: 0 }}>Group 管理</Typography.Title>
-          <Button type="primary" onClick={() => handleOpen()}>新建 Group</Button>
         </div>
 
         <Table columns={columns} data={data} loading={loading} rowKey="id" />

@@ -386,6 +386,17 @@ const Channels: React.FC = () => {
 
   return (
     <div className="ag-page">
+      <div className="ag-page-header">
+        <div>
+          <p className="ag-page-eyebrow">Routing</p>
+          <h1 className="ag-page-title">Channels</h1>
+          <p className="ag-page-description">配置上游渠道、模型映射、权重与启用状态。</p>
+        </div>
+        <Button type="primary" icon={<IconPlus />} onClick={openCreate}>
+          新建 Channel
+        </Button>
+      </div>
+
       <div className="ag-data-panel">
         <div
           style={{
@@ -395,12 +406,6 @@ const Channels: React.FC = () => {
             marginBottom: 16,
           }}
         >
-          <Typography.Title heading={5} style={{ margin: 0 }}>
-            Channel 管理
-          </Typography.Title>
-          <Button type="primary" icon={<IconPlus />} onClick={openCreate}>
-            新建 Channel
-          </Button>
         </div>
 
         <Table

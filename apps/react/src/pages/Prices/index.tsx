@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
   Table, Button, Modal, Form, Input, InputNumber,
-  Radio, Popconfirm, Message, Space, Typography, Tag,
+  Radio, Popconfirm, Message, Space, Tag,
 } from '@arco-design/web-react'
 import { IconPlus } from '@arco-design/web-react/icon'
 import { getPrices, createPrice, updatePrice, deletePrice } from '../../api/prices'
@@ -132,19 +132,26 @@ const Prices: React.FC = () => {
 
   return (
     <div className="ag-page">
+      <div className="ag-page-header">
+        <div>
+          <p className="ag-page-eyebrow">Billing</p>
+          <h1 className="ag-page-title">Prices</h1>
+          <p className="ag-page-description">配置模型与请求计价，影响成本统计与扣费计算。</p>
+        </div>
+        <Space>
+          <Input
+            placeholder="搜索模型名"
+            value={searchText}
+            onChange={setSearchText}
+            allowClear
+            style={{ width: 200 }}
+          />
+          <Button type="primary" icon={<IconPlus />} onClick={() => handleOpen()}>新增价格</Button>
+        </Space>
+      </div>
+
       <div className="ag-data-panel">
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-          <Typography.Title heading={5} style={{ margin: 0 }}>价格管理</Typography.Title>
-          <Space>
-            <Input
-              placeholder="搜索模型名"
-              value={searchText}
-              onChange={setSearchText}
-              allowClear
-              style={{ width: 200 }}
-            />
-            <Button type="primary" icon={<IconPlus />} onClick={() => handleOpen()}>新增价格</Button>
-          </Space>
         </div>
 
         <Table columns={columns} data={filtered} loading={loading} rowKey="id" pagination={{ pageSize: 20, showTotal: true }} />
