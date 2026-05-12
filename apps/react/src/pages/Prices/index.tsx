@@ -131,22 +131,24 @@ const Prices: React.FC = () => {
   ]
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Typography.Title heading={5} style={{ margin: 0 }}>价格管理</Typography.Title>
-        <Space>
-          <Input
-            placeholder="搜索模型名"
-            value={searchText}
-            onChange={setSearchText}
-            allowClear
-            style={{ width: 200 }}
-          />
-          <Button type="primary" icon={<IconPlus />} onClick={() => handleOpen()}>新增价格</Button>
-        </Space>
-      </div>
+    <div className="ag-page">
+      <div className="ag-data-panel">
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+          <Typography.Title heading={5} style={{ margin: 0 }}>价格管理</Typography.Title>
+          <Space>
+            <Input
+              placeholder="搜索模型名"
+              value={searchText}
+              onChange={setSearchText}
+              allowClear
+              style={{ width: 200 }}
+            />
+            <Button type="primary" icon={<IconPlus />} onClick={() => handleOpen()}>新增价格</Button>
+          </Space>
+        </div>
 
-      <Table columns={columns} data={filtered} loading={loading} rowKey="id" pagination={{ pageSize: 20, showTotal: true }} />
+        <Table columns={columns} data={filtered} loading={loading} rowKey="id" pagination={{ pageSize: 20, showTotal: true }} />
+      </div>
 
       <Modal
         title={editing ? '编辑价格' : '新增价格'}

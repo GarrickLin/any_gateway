@@ -385,31 +385,33 @@ const Channels: React.FC = () => {
   ]
 
   return (
-    <div>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 16,
-        }}
-      >
-        <Typography.Title heading={5} style={{ margin: 0 }}>
-          Channel 管理
-        </Typography.Title>
-        <Button type="primary" icon={<IconPlus />} onClick={openCreate}>
-          新建 Channel
-        </Button>
-      </div>
+    <div className="ag-page">
+      <div className="ag-data-panel">
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 16,
+          }}
+        >
+          <Typography.Title heading={5} style={{ margin: 0 }}>
+            Channel 管理
+          </Typography.Title>
+          <Button type="primary" icon={<IconPlus />} onClick={openCreate}>
+            新建 Channel
+          </Button>
+        </div>
 
-      <Table
-        rowKey="id"
-        loading={loading}
-        columns={columns}
-        data={data}
-        pagination={{ pageSize: 20, showTotal: true }}
-        scroll={{ x: true }}
-      />
+        <Table
+          rowKey="id"
+          loading={loading}
+          columns={columns}
+          data={data}
+          pagination={{ pageSize: 20, showTotal: true }}
+          scroll={{ x: true }}
+        />
+      </div>
 
       {/* 模型列表查看 Modal */}
       <Modal

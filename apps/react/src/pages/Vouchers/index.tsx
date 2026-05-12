@@ -110,15 +110,17 @@ const Vouchers: React.FC = () => {
   ]
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Typography.Title heading={5} style={{ margin: 0 }}>消费券管理</Typography.Title>
-        <Button type="primary" icon={<IconPlus />} onClick={() => { form.resetFields(); setVisible(true) }}>
-          生成消费券
-        </Button>
-      </div>
+    <div className="ag-page">
+      <div className="ag-data-panel">
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+          <Typography.Title heading={5} style={{ margin: 0 }}>消费券管理</Typography.Title>
+          <Button type="primary" icon={<IconPlus />} onClick={() => { form.resetFields(); setVisible(true) }}>
+            生成消费券
+          </Button>
+        </div>
 
-      <Table columns={columns} data={data} loading={loading} rowKey="id" />
+        <Table columns={columns} data={data} loading={loading} rowKey="id" />
+      </div>
 
       <Modal
         title="生成消费券"

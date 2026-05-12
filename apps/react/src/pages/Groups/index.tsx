@@ -326,13 +326,15 @@ const Groups: React.FC = () => {
   ]
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Typography.Title heading={5} style={{ margin: 0 }}>Group 管理</Typography.Title>
-        <Button type="primary" onClick={() => handleOpen()}>新建 Group</Button>
-      </div>
+    <div className="ag-page">
+      <div className="ag-data-panel">
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+          <Typography.Title heading={5} style={{ margin: 0 }}>Group 管理</Typography.Title>
+          <Button type="primary" onClick={() => handleOpen()}>新建 Group</Button>
+        </div>
 
-      <Table columns={columns} data={data} loading={loading} rowKey="id" />
+        <Table columns={columns} data={data} loading={loading} rowKey="id" />
+      </div>
 
       {/* 新建/编辑 Group Modal */}
       <Modal

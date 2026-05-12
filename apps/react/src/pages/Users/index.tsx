@@ -90,7 +90,7 @@ const AdminTab: React.FC = () => {
   ]
 
   return (
-    <div>
+    <div className="ag-data-panel">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <div />
         <Button type="primary" onClick={() => setVisible(true)}>提权用户</Button>
@@ -270,7 +270,7 @@ const UserGroupTab: React.FC = () => {
   ]
 
   return (
-    <div>
+    <div className="ag-data-panel">
       <div style={{ marginBottom: 16 }}>
         <Typography.Text type="secondary">
           显示所有 AD 用户，点击"管理分组"可查看并配置用户所属分组。
@@ -339,7 +339,7 @@ const UserGroupTab: React.FC = () => {
 // ========================
 const Users: React.FC = () => {
   return (
-    <div>
+    <div className="ag-page">
       <Typography.Title heading={5} style={{ marginBottom: 16 }}>用户管理</Typography.Title>
       <Tabs defaultActiveTab="admin">
         <TabPane key="admin" title="管理员权限">
