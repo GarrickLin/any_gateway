@@ -105,20 +105,26 @@ const Home: React.FC = () => {
                 <span className="ag-home-code-dot" />
                 <span className="ag-home-code-label">POST /v1/chat/completions</span>
               </div>
-              <pre className="ag-home-code-body"><span className="ag-code-comment"># 请求：切换模型只需改一个字段</span>
-<span className="ag-code-keyword">curl</span> https://gateway.example.com/v1/chat/completions \
-  -H <span className="ag-code-string">"Authorization: Bearer sk-xxx"</span> \
-  -d <span className="ag-code-string">'{
-    "model": "<span className="ag-code-highlight">claude-opus-4-5</span>",
-    "messages": [&#123;"role": "user", "content": "Hello"&#125;]
-  }'</span>
-
-<span className="ag-code-comment"># 响应</span>
-<span className="ag-code-punctuation">&#123;</span>
-  <span className="ag-code-key">"model"</span>: <span className="ag-code-string">"claude-opus-4-5"</span>,
-  <span className="ag-code-key">"usage"</span>: &#123; <span className="ag-code-key">"total_tokens"</span>: <span className="ag-code-number">42</span> &#125;,
-  <span className="ag-code-key">"choices"</span>: [&#123; <span className="ag-code-key">"message"</span>: &#123;<span className="ag-code-key">"content"</span>: <span className="ag-code-string">"Hi!"</span>&#125; &#125;]
-<span className="ag-code-punctuation">&#125;</span></pre>
+              <pre
+                className="ag-home-code-body"
+                // eslint-disable-next-line react/no-danger
+                dangerouslySetInnerHTML={{
+                  __html: [
+                    '<span class="ag-code-comment"># 请求：切换模型只需改一个字段</span>',
+                    '<span class="ag-code-keyword">curl</span> https://gateway.example.com/v1/chat/completions \\',
+                    '  -H <span class="ag-code-string">"Authorization: Bearer sk-xxx"</span> \\',
+                    '  -d <span class="ag-code-string">\'{"model": "<span class="ag-code-highlight">claude-opus-4-5</span>",</span>',
+                    '      <span class="ag-code-string">"messages": [{"role": "user", "content": "Hello"}]}\'</span>',
+                    '',
+                    '<span class="ag-code-comment"># 响应</span>',
+                    '<span class="ag-code-punctuation">{</span>',
+                    '  <span class="ag-code-key">"model"</span>: <span class="ag-code-string">"claude-opus-4-5"</span>,',
+                    '  <span class="ag-code-key">"usage"</span>: { <span class="ag-code-key">"total_tokens"</span>: <span class="ag-code-number">42</span> },',
+                    '  <span class="ag-code-key">"choices"</span>: [{"message": {"content": <span class="ag-code-string">"Hi!"</span>}}]',
+                    '<span class="ag-code-punctuation">}</span>',
+                  ].join('\n'),
+                }}
+              />
             </div>
             <div className="ag-home-badges">
               {['分组限流', '用量审计', '多渠道路由', '消费券'].map((badge) => (

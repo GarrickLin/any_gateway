@@ -190,15 +190,14 @@
 }
 
 .ag-home-features-header {
-  margin-bottom: 48px;
+  margin-bottom: 40px;
 }
 
 .ag-home-features-sub {
-  margin: 0;
+  margin: -36px 0 0;
   text-align: center;
   color: var(--ag-on-surface-variant);
   font-size: 16px;
-  margin-top: -32px;
 }
 
 /* 左右分栏：主卡片 + 次要卡片列 */
@@ -239,13 +238,28 @@
   box-shadow: var(--ag-shadow-soft);
 }
 
-/* 主卡片：更大的内边距和标题 */
+/* 主卡片：渐变背景 + 撑满高度 */
 .ag-home-feature-card-primary.arco-card {
-  background: linear-gradient(135deg, var(--ag-surface-lowest) 0%, color-mix(in oklab, var(--ag-primary-soft) 30%, var(--ag-surface-lowest)) 100%);
+  background: linear-gradient(145deg,
+    color-mix(in oklab, var(--ag-primary-soft) 18%, var(--ag-surface-lowest)) 0%,
+    var(--ag-surface-lowest) 60%);
+  display: flex;
+  flex-direction: column;
+}
+
+.ag-home-feature-card-primary .arco-card-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .ag-home-feature-card-primary .ag-home-feature-title.arco-typography {
   font-size: 22px;
+}
+
+/* 主卡片标题下方的描述文字撑开，把模型标签推到底部 */
+.ag-home-feature-card-primary .ag-home-feature-desc.arco-typography {
+  flex: 1;
 }
 
 /* 模型标签 */
@@ -256,11 +270,12 @@
   margin-top: 20px;
 }
 
+/* 模型标签：用 primary-soft 背景，更有品牌感 */
 .ag-home-feature-model-tag {
   padding: 4px 10px;
   border-radius: 6px;
-  background: var(--ag-surface-container);
-  color: var(--ag-on-surface-variant);
+  background: var(--ag-primary-soft);
+  color: var(--ag-primary);
   font-size: 12px;
   font-weight: 600;
   font-family: var(--ag-font-headline);
@@ -316,7 +331,7 @@
   display: flex;
   align-items: flex-start;
   gap: 32px;
-  padding: 32px 0;
+  padding: 20px 0;
   border-bottom: 1px solid var(--ag-outline-variant);
 }
 
@@ -343,8 +358,8 @@
   font-family: var(--ag-font-headline);
   font-size: 18px;
   font-weight: 700;
-  color: var(--ag-on-surface);
-  margin-bottom: 8px;
+  color: var(--ag-primary);
+  margin-bottom: 6px;
 }
 
 .ag-home-audience-desc.arco-typography {
