@@ -2,15 +2,15 @@ import { createBrowserRouter, Navigate } from 'react-router-dom'
 import Layout from '../components/Layout'
 import AuthGuard from '../components/AuthGuard'
 import Login from '../pages/Login'
-import Home from '../pages/Home'
+import ApiKeys from '../pages/ApiKeys'
+import Channels from '../pages/Channels'
+import Chat from '../pages/Chat'
 import Dashboard from '../pages/Dashboard'
 import Groups from '../pages/Groups'
-import Channels from '../pages/Channels'
-import ApiKeys from '../pages/ApiKeys'
-import Users from '../pages/Users'
+import Home from '../pages/Home'
 import Logs from '../pages/Logs'
-import Chat from '../pages/Chat'
 import Prices from '../pages/Prices'
+import Users from '../pages/Users'
 import Vouchers from '../pages/Vouchers'
 
 const router = createBrowserRouter([
@@ -18,6 +18,7 @@ const router = createBrowserRouter([
     path: '/login',
     element: <Login />,
   },
+  // 公开页面：营销主页，无需认证，由 Caddy 路由控制
   {
     path: '/home',
     element: <Home />,
