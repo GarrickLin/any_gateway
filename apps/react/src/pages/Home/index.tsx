@@ -132,18 +132,33 @@ const Home: React.FC = () => {
       {/* Features */}
       <section className="ag-home-features" id="features">
         <div className="ag-home-section-inner">
-          <Title heading={2} className="ag-home-section-title">核心能力</Title>
-          <Row gutter={[24, 24]}>
-            {features.map((f) => (
-              <Col key={f.title} xs={24} sm={24} md={8}>
-                <Card className="ag-home-feature-card" bordered={false}>
+          <div className="ag-home-features-header">
+            <Title heading={2} className="ag-home-section-title">核心能力</Title>
+            <p className="ag-home-features-sub">一套 API，统一管理所有 AI 资源</p>
+          </div>
+          <div className="ag-home-features-grid">
+            {/* 主卡片：模型聚合 */}
+            <Card className="ag-home-feature-card ag-home-feature-card-primary" bordered={false}>
+              <div className="ag-home-feature-icon">{features[0].icon}</div>
+              <Title heading={3} className="ag-home-feature-title">{features[0].title}</Title>
+              <Paragraph className="ag-home-feature-desc">{features[0].desc}</Paragraph>
+              <div className="ag-home-feature-models">
+                {['OpenAI', 'Anthropic', 'Gemini', 'DeepSeek'].map((m) => (
+                  <span key={m} className="ag-home-feature-model-tag">{m}</span>
+                ))}
+              </div>
+            </Card>
+            {/* 次要卡片列 */}
+            <div className="ag-home-features-secondary">
+              {features.slice(1).map((f) => (
+                <Card key={f.title} className="ag-home-feature-card" bordered={false}>
                   <div className="ag-home-feature-icon">{f.icon}</div>
                   <Title heading={5} className="ag-home-feature-title">{f.title}</Title>
                   <Paragraph className="ag-home-feature-desc">{f.desc}</Paragraph>
                 </Card>
-              </Col>
-            ))}
-          </Row>
+              ))}
+            </div>
+          </div>
         </div>
       </section>
 
@@ -151,16 +166,17 @@ const Home: React.FC = () => {
       <section className="ag-home-audience" id="audience">
         <div className="ag-home-section-inner">
           <Title heading={2} className="ag-home-section-title">适用对象</Title>
-          <Row gutter={[24, 24]}>
-            {audiences.map((a) => (
-              <Col key={a.role} xs={24} sm={24} md={8}>
-                <div className="ag-home-audience-item">
+          <div className="ag-home-audience-list">
+            {audiences.map((a, i) => (
+              <div key={a.role} className="ag-home-audience-item">
+                <span className="ag-home-audience-index">0{i + 1}</span>
+                <div className="ag-home-audience-content">
                   <Text className="ag-home-audience-role">{a.role}</Text>
                   <Paragraph className="ag-home-audience-desc">{a.desc}</Paragraph>
                 </div>
-              </Col>
+              </div>
             ))}
-          </Row>
+          </div>
         </div>
       </section>
 

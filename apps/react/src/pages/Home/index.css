@@ -189,6 +189,32 @@
   background: var(--ag-surface);
 }
 
+.ag-home-features-header {
+  margin-bottom: 48px;
+}
+
+.ag-home-features-sub {
+  margin: 0;
+  text-align: center;
+  color: var(--ag-on-surface-variant);
+  font-size: 16px;
+  margin-top: -32px;
+}
+
+/* 左右分栏：主卡片 + 次要卡片列 */
+.ag-home-features-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  align-items: stretch;
+}
+
+.ag-home-features-secondary {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
 .ag-home-section-title.arco-typography {
   font-family: var(--ag-font-headline);
   font-size: 32px;
@@ -211,6 +237,34 @@
 .ag-home-feature-card.arco-card:hover {
   transform: translateY(-4px);
   box-shadow: var(--ag-shadow-soft);
+}
+
+/* 主卡片：更大的内边距和标题 */
+.ag-home-feature-card-primary.arco-card {
+  background: linear-gradient(135deg, var(--ag-surface-lowest) 0%, color-mix(in oklab, var(--ag-primary-soft) 30%, var(--ag-surface-lowest)) 100%);
+}
+
+.ag-home-feature-card-primary .ag-home-feature-title.arco-typography {
+  font-size: 22px;
+}
+
+/* 模型标签 */
+.ag-home-feature-models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.ag-home-feature-model-tag {
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--ag-surface-container);
+  color: var(--ag-on-surface-variant);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--ag-font-headline);
+  letter-spacing: 0.01em;
 }
 
 .ag-home-feature-icon {
@@ -239,32 +293,71 @@
   margin: 0;
 }
 
+@media (max-width: 768px) {
+  .ag-home-features-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── Audience ── */
 .ag-home-audience {
   padding: 80px 0;
   background: var(--ag-surface-lowest);
 }
 
+/* 横向列表，用分隔线代替卡片边框 */
+.ag-home-audience-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
 .ag-home-audience-item {
-  padding: 32px;
-  border-radius: var(--ag-radius-lg);
-  border: 1px solid var(--ag-outline-variant);
-  height: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 32px;
+  padding: 32px 0;
+  border-bottom: 1px solid var(--ag-outline-variant);
+}
+
+.ag-home-audience-item:first-child {
+  border-top: 1px solid var(--ag-outline-variant);
+}
+
+.ag-home-audience-index {
+  font-family: var(--ag-font-headline);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ag-outline);
+  letter-spacing: 0.04em;
+  min-width: 28px;
+  padding-top: 2px;
+}
+
+.ag-home-audience-content {
+  flex: 1;
 }
 
 .ag-home-audience-role.arco-typography {
   display: block;
   font-family: var(--ag-font-headline);
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
-  color: var(--ag-primary);
-  margin-bottom: 12px;
+  color: var(--ag-on-surface);
+  margin-bottom: 8px;
 }
 
 .ag-home-audience-desc.arco-typography {
   color: var(--ag-on-surface-variant);
   line-height: 1.6;
   margin: 0;
+  max-width: 560px;
+}
+
+@media (max-width: 768px) {
+  .ag-home-audience-item {
+    gap: 16px;
+  }
 }
 
 /* ── CTA ── */
