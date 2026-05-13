@@ -1,7 +1,7 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button, Card, Grid, Typography } from '@arco-design/web-react'
-import { IconBranch, IconThunderbolt, IconSafe } from '@arco-design/web-react/icon'
+import { IconBranch, IconSafe } from '@arco-design/web-react/icon'
 import './index.css'
 
 const { Row, Col } = Grid
@@ -17,7 +17,15 @@ const Home: React.FC = () => {
       desc: '一个 API Key 接入 OpenAI、Anthropic、Gemini 等主流模型，兼容 OpenAI 接口格式，零改造迁移。',
     },
     {
-      icon: <IconThunderbolt />,
+      icon: (
+        <span
+          className="material-symbols-outlined"
+          style={{ fontVariationSettings: "'FILL' 1", fontSize: '24px' }}
+          aria-hidden="true"
+        >
+          payments
+        </span>
+      ),
       title: '成本控制',
       desc: '分组限流、消费券、余额管理，精细化控制每个用户和团队的 AI 支出。',
     },
