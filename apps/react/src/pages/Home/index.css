@@ -132,3 +132,59 @@
     font-size: 32px;
   }
 }
+
+/* ── Features ── */
+.ag-home-features {
+  padding: 80px 0;
+  background: var(--ag-surface);
+}
+
+.ag-home-section-title.arco-typography {
+  font-family: var(--ag-font-headline);
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-align: center;
+  margin-bottom: 48px;
+  color: var(--ag-on-surface);
+}
+
+.ag-home-feature-card.arco-card {
+  height: 100%;
+  border-radius: var(--ag-radius-lg);
+  background: var(--ag-surface-lowest);
+  box-shadow: none;
+  border: 1px solid var(--ag-outline-variant);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ag-home-feature-card.arco-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--ag-shadow-soft);
+}
+
+.ag-home-feature-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--ag-radius);
+  background: var(--ag-primary-soft);
+  color: var(--ag-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  margin-bottom: 16px;
+}
+
+.ag-home-feature-title.arco-typography {
+  font-family: var(--ag-font-headline);
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--ag-on-surface);
+}
+
+.ag-home-feature-desc.arco-typography {
+  color: var(--ag-on-surface-variant);
+  line-height: 1.6;
+  margin: 0;
+}
