@@ -163,8 +163,12 @@ const Home: React.FC = () => {
             联系管理员申请账号，立即开始使用
           </Paragraph>
           <div className="ag-home-cta-actions">
-            {/* 联系方式占位，后续填入 mailto: 或企业微信 */}
-            <Button type="primary" size="large" disabled>
+            <Button
+              type="primary"
+              size="large"
+              href="mailto:admin@example.com"
+              onClick={() => window.location.href = 'mailto:admin@example.com'}
+            >
               联系管理员
             </Button>
             <Button size="large" onClick={() => navigate('/login')}>
