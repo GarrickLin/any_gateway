@@ -132,6 +132,16 @@
   padding-inline: 16px;
 }
 
+/* ── focus-visible 焦点环：键盘导航可见性 ── */
+.ag-home .arco-btn:focus-visible {
+  outline: 2px solid var(--ag-primary);
+  outline-offset: 3px;
+}
+
+.ag-home .arco-btn-primary:focus-visible {
+  outline-color: var(--ag-primary-container);
+}
+
 /* ── 响应式 ── */
 @media (max-width: 768px) {
   .ag-home-hero-inner {
