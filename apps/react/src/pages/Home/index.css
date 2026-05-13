@@ -92,6 +92,10 @@
   background: var(--ag-outline);
 }
 
+.ag-home-code-dot:nth-child(1) { background: #ff5f57; }
+.ag-home-code-dot:nth-child(2) { background: #febc2e; }
+.ag-home-code-dot:nth-child(3) { background: #28c840; }
+
 .ag-home-code-body {
   margin: 0;
   padding: 20px;
