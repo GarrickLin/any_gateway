@@ -34,7 +34,7 @@
 
 /* ── Hero ── */
 .ag-home-hero {
-  padding: 96px 0 80px;
+  padding: 72px 0 64px;
   background:
     radial-gradient(circle at 15% 20%, rgba(0, 61, 155, 0.07), transparent 40%),
     radial-gradient(circle at 85% 10%, rgba(76, 94, 133, 0.06), transparent 35%),
@@ -185,7 +185,7 @@
 
 /* ── Features ── */
 .ag-home-features {
-  padding: 80px 0;
+  padding: 64px 0;
   background: var(--ag-surface);
 }
 
@@ -206,6 +206,12 @@
   grid-template-columns: 1fr 1fr;
   gap: 24px;
   align-items: stretch;
+}
+
+/* 让主卡片的 grid cell 成为 flex 容器，Card 才能真正撑满高度 */
+.ag-home-features-grid > :first-child {
+  display: flex;
+  flex-direction: column;
 }
 
 .ag-home-features-secondary {
@@ -243,6 +249,7 @@
   background: linear-gradient(145deg,
     color-mix(in oklab, var(--ag-primary-soft) 18%, var(--ag-surface-lowest)) 0%,
     var(--ag-surface-lowest) 60%);
+  flex: 1;
   display: flex;
   flex-direction: column;
 }
@@ -259,7 +266,46 @@
 
 /* 主卡片标题下方的描述文字撑开，把模型标签推到底部 */
 .ag-home-feature-card-primary .ag-home-feature-desc.arco-typography {
+  margin-bottom: 16px;
+}
+
+/* 主卡片亮点列表 */
+.ag-home-feature-highlights {
   flex: 1;
+  list-style: none;
+  margin: 0 0 20px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ag-home-feature-highlights li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--ag-on-surface-variant);
+  line-height: 1.5;
+}
+
+.ag-home-feature-highlights li::before {
+  content: '';
+  flex: 0 0 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ag-primary);
+  margin-top: 6px;
+  opacity: 0.6;
+}
+
+/* 次要卡片的亮点列表：字号更小，间距更紧 */
+.ag-home-feature-highlights-sm {
+  margin-top: 12px;
+}
+
+.ag-home-feature-highlights-sm li {
+  font-size: 13px;
 }
 
 /* 模型标签 */
@@ -316,7 +362,7 @@
 
 /* ── Audience ── */
 .ag-home-audience {
-  padding: 80px 0;
+  padding: 64px 0;
   background: var(--ag-surface-lowest);
 }
 

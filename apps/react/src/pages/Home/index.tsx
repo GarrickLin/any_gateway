@@ -28,11 +28,13 @@ const Home: React.FC = () => {
       ),
       title: '成本控制',
       desc: '分组限流、消费券、余额管理，精细化控制每个用户和团队的 AI 支出。',
+      highlights: ['滑动窗口限流，按请求/Token/费用三维度', '消费券与余额独立管理'],
     },
     {
       icon: <IconSafe />,
       title: '企业管理',
       desc: '用户分组、权限分层、完整请求日志与用量审计，满足企业合规需求。',
+      highlights: ['完整请求日志，支持按用户/模型筛选', '权限分层：user / admin / superadmin'],
     },
   ]
 
@@ -148,6 +150,11 @@ const Home: React.FC = () => {
               <div className="ag-home-feature-icon">{features[0].icon}</div>
               <Title heading={3} className="ag-home-feature-title">{features[0].title}</Title>
               <Paragraph className="ag-home-feature-desc">{features[0].desc}</Paragraph>
+              <ul className="ag-home-feature-highlights">
+                <li>兼容 OpenAI 接口格式，零改造迁移</li>
+                <li>模型别名映射，一行代码切换上游</li>
+                <li>多渠道加权负载均衡，自动故障转移</li>
+              </ul>
               <div className="ag-home-feature-models">
                 {['OpenAI', 'Anthropic', 'Gemini', 'DeepSeek'].map((m) => (
                   <span key={m} className="ag-home-feature-model-tag">{m}</span>
@@ -161,6 +168,11 @@ const Home: React.FC = () => {
                   <div className="ag-home-feature-icon">{f.icon}</div>
                   <Title heading={5} className="ag-home-feature-title">{f.title}</Title>
                   <Paragraph className="ag-home-feature-desc">{f.desc}</Paragraph>
+                  {f.highlights && (
+                    <ul className="ag-home-feature-highlights ag-home-feature-highlights-sm">
+                      {f.highlights.map((h) => <li key={h}>{h}</li>)}
+                    </ul>
+                  )}
                 </Card>
               ))}
             </div>
