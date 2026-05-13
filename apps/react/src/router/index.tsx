@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from 'react-router-dom'
 import Layout from '../components/Layout'
 import AuthGuard from '../components/AuthGuard'
 import Login from '../pages/Login'
+import Home from '../pages/Home'
 import Dashboard from '../pages/Dashboard'
 import Groups from '../pages/Groups'
 import Channels from '../pages/Channels'
@@ -16,6 +17,10 @@ const router = createBrowserRouter([
   {
     path: '/login',
     element: <Login />,
+  },
+  {
+    path: '/home',
+    element: <Home />,
   },
   {
     path: '/',
