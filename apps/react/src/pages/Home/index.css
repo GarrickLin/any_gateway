@@ -121,6 +121,17 @@
   font-weight: 500;
 }
 
+/* ── 按钮触摸目标：确保最小 44px 高度 ── */
+.ag-home .arco-btn-size-large {
+  min-height: 44px;
+  padding-inline: 20px;
+}
+
+.ag-home .arco-btn-size-default {
+  min-height: 44px;
+  padding-inline: 16px;
+}
+
 /* ── 响应式 ── */
 @media (max-width: 768px) {
   .ag-home-hero-inner {
