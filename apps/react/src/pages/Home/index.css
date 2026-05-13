@@ -147,6 +147,13 @@
 }
 
 /* ── 响应式 ── */
+@media (max-width: 960px) {
+  .ag-home-hero-inner {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+}
+
 @media (max-width: 768px) {
   .ag-home-hero-inner {
     grid-template-columns: 1fr;
