@@ -255,6 +255,9 @@ class ModelPriceBase(SQLModel):
     model_name: str
     unit: str
     price_per_unit: float
+    context_length: int | None = None
+    vendor: str | None = None
+    stability: str | None = None
 
 
 class ModelPrice(ModelPriceBase, table=True):
@@ -271,6 +274,9 @@ class ModelPriceUpdate(SQLModel):
     model_name: str | None = None
     unit: str | None = None
     price_per_unit: float | None = None
+    context_length: int | None = None
+    vendor: str | None = None
+    stability: str | None = None
 
 
 # =======================

@@ -6,6 +6,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/admin': 'http://localhost:8003',
+      '/public': 'http://localhost:8003',
       '/user': 'http://localhost:8003',
       '/auth': 'http://localhost:8003',
       '/v1': 'http://localhost:8003',

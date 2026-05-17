@@ -152,6 +152,29 @@ app.include_router(group_model_price_router)
 app.include_router(voucher_router)
 
 
+@app.get("/public/model-prices", tags=["Public"])
+async def public_model_prices():
+    """公开的模型价格列表，无需认证"""
+    from db.database import engine
+    from db.models import ModelPrice
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        result = await session.execute(select(ModelPrice))
+        rows = result.scalars().all()
+        return {
+            "data": [
+                {
+                    "model_name": r.model_name,
+                    "unit": r.unit,
+                    "price_per_unit": r.price_per_unit,
+                    "context_length": r.context_length,
+                    "vendor": r.vendor,
+                    "stability": r.stability,
+                }
+                for r in rows
+            ]
+        }
+
+
 def load_config() -> Dict[str, Any]:
     """从 YAML 文件加载配置"""
     if CONFIG_FILE.exists():

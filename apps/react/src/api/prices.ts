@@ -5,6 +5,9 @@ export interface ModelPrice {
   model_name: string
   unit: string
   price_per_unit: number
+  context_length?: number
+  vendor?: string
+  stability?: string
   created_at: string
 }
 
@@ -12,10 +15,16 @@ export interface ModelPriceCreate {
   model_name: string
   unit: string
   price_per_unit: number
+  context_length?: number
+  vendor?: string
+  stability?: string
 }
 
 export interface ModelPriceUpdate {
-  price_per_unit: number
+  price_per_unit?: number
+  context_length?: number
+  vendor?: string
+  stability?: string
 }
 
 export const getPrices = () =>

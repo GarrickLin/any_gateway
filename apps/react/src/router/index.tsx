@@ -8,6 +8,8 @@ import Chat from '../pages/Chat'
 import Dashboard from '../pages/Dashboard'
 import Groups from '../pages/Groups'
 import Home from '../pages/Home'
+import Docs from '../pages/Docs'
+import PublicPricing from '../pages/Pricing/public'
 import Logs from '../pages/Logs'
 import Prices from '../pages/Prices'
 import Users from '../pages/Users'
@@ -22,6 +24,14 @@ const router = createBrowserRouter([
   {
     path: '/home',
     element: <Home />,
+  },
+  {
+    path: '/pricing',
+    element: <PublicPricing />,
+  },
+  {
+    path: '/docs',
+    element: <Docs />,
   },
   {
     path: '/',

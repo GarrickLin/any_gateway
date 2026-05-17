@@ -4,6 +4,7 @@ from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
+from sqlalchemy import text
 from sqlmodel import SQLModel, select
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./data/gateway.db")
@@ -34,6 +35,19 @@ async def init_db():
     """在 FastAPI lifespan 启动时调用，自动建表（如表已存在则跳过）"""
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+
+    async with engine.begin() as conn:
+        for col_name, col_type in [
+            ("context_length", "INTEGER"),
+            ("vendor", "TEXT"),
+            ("stability", "TEXT"),
+        ]:
+            try:
+                await conn.execute(text(
+                    f"ALTER TABLE model_prices ADD COLUMN {col_name} {col_type}"
+                ))
+            except Exception:
+                pass
 
     # 确保 default 分组存在（幂等）
     from db.models import UserGroup
