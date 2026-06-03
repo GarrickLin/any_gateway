@@ -163,7 +163,7 @@ const Home: React.FC = () => {
             <span className="ag-home-brand-title">Any Gateway</span>
           </div>
           <div className="ag-home-nav-links">
-            <a className="ag-home-nav-link" href="/docs">开发文档</a>
+            <a className="ag-home-nav-link" href="/guide">开发文档</a>
             <a className="ag-home-nav-link" href="#features">核心能力</a>
             <a className="ag-home-nav-link" href="/pricing">价格对比</a>
             <a className="ag-home-nav-link" href="mailto:admin@example.com">联系我们</a>
@@ -427,7 +427,7 @@ print(response.choices[0].message.content)`
           <div className="ag-home-footer-col">
             <h4 className="ag-home-footer-col-title">产品与服务</h4>
             <ul className="ag-home-footer-links">
-              <li><a href="/docs">开发文档</a></li>
+              <li><a href="/guide">开发文档</a></li>
               <li><a href="/login">管理控制台</a></li>
               <li><a href="/pricing">价格对比</a></li>
               <li><a href="#">快速开始</a></li>
