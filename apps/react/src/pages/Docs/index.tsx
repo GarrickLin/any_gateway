@@ -104,10 +104,12 @@ const Docs: React.FC = () => {
 
   const scrollTo = useCallback((id: string) => {
     const el = document.getElementById(id)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth' })
-      setActiveId(id)
-    }
+    if (!el) return
+
+    // Nav is sticky at top: 0 with 80px height — offset so heading lands below it.
+    const top = el.getBoundingClientRect().top + window.scrollY - 100
+    window.scrollTo({ top, behavior: 'smooth' })
+    setActiveId(id)
   }, [])
 
   useEffect(() => {
@@ -145,7 +147,7 @@ const Docs: React.FC = () => {
   }, [scrollTo])
 
   return (
-    <div className="ag-home">
+    <div className="ag-home ag-docs-page">
       <div className="ag-home-glow ag-home-glow-1" />
       <div className="ag-home-glow ag-home-glow-2" />
 
@@ -157,7 +159,7 @@ const Docs: React.FC = () => {
             <span className="ag-home-brand-title">Any Gateway</span>
           </a>
           <div className="ag-home-nav-links">
-            <a className="ag-home-nav-link ag-home-nav-link-active" href="/docs">开发文档</a>
+            <a className="ag-home-nav-link ag-home-nav-link-active" href="/guide">开发文档</a>
             <a className="ag-home-nav-link" href="/pricing">价格对比</a>
             <a className="ag-home-nav-link" href="mailto:admin@example.com">联系我们</a>
             <button className="ag-btn ag-btn-primary" onClick={() => navigate('/login')}>
@@ -1362,7 +1364,7 @@ GEMINI_MODEL=gemini-2.5-pro`}</CodeBlock>
           <div className="ag-home-footer-col">
             <h4 className="ag-home-footer-col-title">产品与服务</h4>
             <ul className="ag-home-footer-links">
-              <li><a href="/docs">开发文档</a></li>
+              <li><a href="/guide">开发文档</a></li>
               <li><a href="/login">管理控制台</a></li>
               <li><a href="/pricing">价格对比</a></li>
             </ul>
