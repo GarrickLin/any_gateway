@@ -26,3 +26,6 @@ docs/superpowers
 apps/website/
 docs/web_designs/
 .gstack/
+
+
+mock/mock_ad_server/users.yaml
