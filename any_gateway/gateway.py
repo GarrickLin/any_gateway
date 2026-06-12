@@ -22,6 +22,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select, col
 from services.quota import check_quota, update_usage, update_user_balance
 from services.pricing import calculate_cost
+from services.responses_converter import (
+    responses_to_chat_request,
+    chat_resp_to_responses_resp,
+    format_responses_sse,
+    _ResponsesStreamState,
+)
 from services.auth_service import require_auth, optional_require_auth
 from admin.router import token_router, channel_router, group_router, admin_router, auth_router, me_router, users_router, user_router, group_channel_router, user_group_router, rate_limit_router, model_price_router, group_model_price_router, voucher_router
 import yaml
@@ -1313,6 +1319,281 @@ async def refresh_models(request: Request):
 async def health():
     """健康检查"""
     return {"status": "healthy"}
+
+
+# --------------------------------------------------------------------------- #
+# Responses API 端点（对外 /v1/responses）
+#
+# codex 等客户端只会说 OpenAI Responses 协议。本端点把 Responses 请求转成
+# Chat Completions 发给上游（上游全是 chat completions），再把上游响应转回
+# Responses 格式返回。计费/限流/鉴权/日志全部复用现有链路。
+#
+# ⚠️ 必须注册在下方 catch-all `/v1/{path:path}` 之前，否则会被透明代理捕获。
+# --------------------------------------------------------------------------- #
+
+
+def _bill_and_log_response(
+    request: Request,
+    *,
+    request_id: str,
+    chat_body: dict,
+    response_body: str,
+    status: int,
+    duration_ms: float,
+    model_name: str | None,
+    backend_url: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int,
+    cache_creation_tokens: int,
+    is_stream: bool,
+) -> None:
+    """非流式 Responses 请求的计费 + 日志（fire-and-forget），复用现有链路。"""
+    log_task = asyncio.create_task(
+        log_writer.enqueue_log({
+            "timestamp": timestamp(),
+            "method": request.method,
+            "path": "responses",
+            "request_url": backend_url,
+            "request_headers": {},
+            "request_body": json.dumps(chat_body, ensure_ascii=False),
+            "response_status": status,
+            "response_headers": {},
+            "response_body": response_body,
+            "duration_ms": duration_ms,
+            "model_name": model_name,
+            "backend_url": backend_url,
+            "is_stream": is_stream,
+            "token_id": getattr(request.state, "token_id", None),
+            "request_id": request_id,
+        })
+    )
+    app.state.log_tasks.add(log_task)
+    log_task.add_done_callback(app.state.log_tasks.discard)
+
+    async def _bill():
+        group_id = getattr(request.state, "token_group_id", None)
+        multiplier = await _get_group_multiplier(group_id)
+        async with AsyncSession(engine, expire_on_commit=False) as ps:
+            cost_usd = await calculate_cost(
+                session=ps, group_id=group_id, model=model_name,
+                input_tokens=input_tokens, output_tokens=output_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_creation_tokens=cache_creation_tokens, multiplier=multiplier,
+            )
+        await update_usage(
+            token_id=getattr(request.state, "token_id", None), channel_id=None,
+            model=model_name, input_tokens=input_tokens, output_tokens=output_tokens,
+            cost_usd=cost_usd, duration_ms=duration_ms, status=status, is_stream=False,
+            username=getattr(request.state, "token_username", None),
+            request_id=request_id, cache_read_tokens=cache_read_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            covered_by_package=getattr(request.state, "covered_by_package", False),
+        )
+        if group_id:
+            await _update_rate_limit_counters(
+                group_id=group_id, request_id=request_id, input_tokens=input_tokens,
+                output_tokens=output_tokens, cost_usd=cost_usd,
+                username=getattr(request.state, "token_username", None),
+            )
+        await _maybe_deduct(
+            covered=getattr(request.state, "covered_by_package", False),
+            username=getattr(request.state, "token_username", None), cost_usd=cost_usd,
+        )
+
+    bill_task = asyncio.create_task(_bill())
+    app.state.log_tasks.add(bill_task)
+    bill_task.add_done_callback(app.state.log_tasks.discard)
+
+
+@app.post("/v1/responses")
+async def responses_endpoint(request: Request):
+    """对外 Responses API 入口：转换 → 上游 chat → 转换回 Responses。"""
+    # 1. 额度拦截
+    quota_usd = getattr(request.state, "quota_usd", 0)
+    used_usd = getattr(request.state, "used_usd", 0)
+    if not check_quota(quota_usd=quota_usd, used_usd=used_usd):
+        return JSONResponse(
+            content={"error": {"type": "quota_exceeded", "message": "Token quota exceeded"}},
+            status_code=402,
+        )
+
+    # 2. 解析 + 转换请求
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return JSONResponse(content={"error": "invalid JSON body"}, status_code=400)
+
+    original_model = body.get("model")
+    if not original_model:
+        return JSONResponse(content={"error": "No model name provided"}, status_code=400)
+
+    chat_body = responses_to_chat_request(body)
+
+    # 3. 路由（复用现有逻辑）
+    backend_info = await find_backend_for_model(
+        original_model,
+        username=getattr(request.state, "token_username", None),
+        group_id=getattr(request.state, "token_group_id", None),
+    )
+    if not backend_info:
+        if not getattr(request.state, "token_username", None):
+            return JSONResponse(content={"error": "anonymous token is not allowed"}, status_code=401)
+        return JSONResponse(content={"error": "no available channel for this model"}, status_code=400)
+
+    backend_url = backend_info["base_url"]
+    api_key = backend_info["api_key"]
+    chat_body["model"] = backend_info["model"]
+    provider = backend_info.get("provider", "")
+
+    is_stream = bool(body.get("stream"))
+    if is_stream:
+        return await _forward_responses_stream(
+            request, chat_body, backend_url, api_key, provider, original_model)
+    return await _forward_responses_nonstream(
+        request, chat_body, backend_url, api_key, provider, original_model)
+
+
+async def _forward_responses_nonstream(
+    request: Request, chat_body: dict, backend_url: str, api_key: str,
+    provider: str, display_model: str | None,
+) -> Response:
+    """非流式：调上游 chat completions，转换响应为 Responses。"""
+    start_time = time.time()
+    request_id = uuid4().hex
+    url = urljoin(backend_url.rstrip("/") + "/", "chat/completions")
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    content = json.dumps(chat_body).encode("utf-8")
+
+    async with httpx.AsyncClient(timeout=TIMEOUT_BOUND, verify=not SKIP_SSL_VERIFY) as client:
+        resp = await client.request("POST", url, content=content, headers=headers)
+        resp_bytes = resp.content
+
+    duration_ms = (time.time() - start_time) * 1000
+
+    if resp.status_code != 200:
+        # 透传上游错误体（chat 格式）
+        try:
+            err_json = json.loads(resp_bytes)
+        except (json.JSONDecodeError, ValueError):
+            err_json = {"error": {"message": resp_bytes.decode("utf-8", errors="replace"),
+                                  "code": resp.status_code}}
+        return JSONResponse(content=err_json, status_code=resp.status_code)
+
+    chat_resp = json.loads(resp_bytes)
+    responses_resp = chat_resp_to_responses_resp(chat_resp)
+
+    usage = chat_resp.get("usage") or {}
+    prompt_details = usage.get("prompt_tokens_details") or {}
+    _bill_and_log_response(
+        request, request_id=request_id, chat_body=chat_body,
+        response_body=resp_bytes.decode("utf-8", errors="replace"),
+        status=resp.status_code, duration_ms=duration_ms, model_name=display_model,
+        backend_url=backend_url,
+        input_tokens=_safe_int(usage.get("prompt_tokens", 0)),
+        output_tokens=_safe_int(usage.get("completion_tokens", 0)),
+        cache_read_tokens=_safe_int(prompt_details.get("cached_tokens", 0)),
+        cache_creation_tokens=0, is_stream=False,
+    )
+    return JSONResponse(content=responses_resp, status_code=200)
+
+
+async def _forward_responses_stream(
+    request: Request, chat_body: dict, backend_url: str, api_key: str,
+    provider: str, display_model: str | None,
+) -> StreamingResponse:
+    """流式：上游 chat SSE → 实时转 Responses 事件。计费用原始 chat chunks。"""
+    start_time = time.time()
+    request_id = uuid4().hex
+    url = urljoin(backend_url.rstrip("/") + "/", "chat/completions")
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json",
+               "Accept": "text/event-stream"}
+    content = json.dumps(chat_body).encode("utf-8")
+
+    raw_chunks: list[str] = []  # 原始 chat 行，给计费/日志
+    response_status = 0
+
+    async def stream_generator():
+        nonlocal response_status
+        state = _ResponsesStreamState(
+            model=display_model,
+            response_id=f"resp_{uuid4().hex}",
+            msg_id=f"msg_{uuid4().hex}",
+            created=int(start_time),
+        )
+        try:
+            async with httpx.AsyncClient(timeout=TIMEOUT_BOUND, verify=not SKIP_SSL_VERIFY) as client:
+                async with client.stream("POST", url, content=content, headers=headers) as response:
+                    response_status = response.status_code
+                    if response_status != 200:
+                        parts = [line async for line in response.aiter_lines()]
+                        body_text = "\n".join(parts)
+                        raw_chunks.append(body_text)
+                        try:
+                            err_json = json.loads(body_text)
+                        except (json.JSONDecodeError, ValueError):
+                            err_json = {"error": {"message": f"上游服务异常 (HTTP {response_status})",
+                                                  "code": response_status}}
+                        yield f"data: {json.dumps(err_json, ensure_ascii=False)}\n\n".encode("utf-8")
+                        return
+
+                    # 前导事件
+                    for et, data in state.header():
+                        yield format_responses_sse(et, data).encode("utf-8")
+
+                    async for line in response.aiter_lines():
+                        raw_chunks.append(line + "\n")
+                        if not line.startswith("data:"):
+                            continue
+                        payload = line[5:].strip()
+                        if payload == "[DONE]" or not payload:
+                            continue
+                        try:
+                            chunk = json.loads(payload)
+                        except (json.JSONDecodeError, ValueError):
+                            continue
+                        for et, data in state.feed(chunk):
+                            yield format_responses_sse(et, data).encode("utf-8")
+
+                    # 收尾事件
+                    for et, data in state.finalize():
+                        yield format_responses_sse(et, data).encode("utf-8")
+        except Exception as e:
+            logger.error(f"Responses 流式转发错误: {e}")
+            err = {"error": {"message": str(e), "code": 0}}
+            yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n".encode("utf-8")
+        finally:
+            duration_ms = (time.time() - start_time) * 1000
+            log_task = asyncio.create_task(
+                log_writer.enqueue_log({
+                    "timestamp": timestamp(), "method": request.method, "path": "responses",
+                    "request_url": url, "request_headers": {},
+                    "request_body": json.dumps(chat_body, ensure_ascii=False),
+                    "response_status": response_status, "response_headers": {},
+                    "response_body": "".join(raw_chunks), "duration_ms": duration_ms,
+                    "model_name": display_model, "backend_url": backend_url, "is_stream": True,
+                    "token_id": getattr(request.state, "token_id", None), "request_id": request_id,
+                })
+            )
+            app.state.log_tasks.add(log_task)
+            log_task.add_done_callback(app.state.log_tasks.discard)
+
+            # 计费：用原始 chat chunks 喂现有解析（与 chat completions 渠道一致）
+            finalize_task = asyncio.create_task(
+                _finalize_stream_usage(
+                    request=request, request_id=request_id, model_name=display_model,
+                    duration_ms=duration_ms, response_status=response_status,
+                    accumulated_chunks=raw_chunks, provider=provider or "openai",
+                )
+            )
+            app.state.log_tasks.add(finalize_task)
+            finalize_task.add_done_callback(app.state.log_tasks.discard)
+
+    return StreamingResponse(
+        stream_generator(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive",
+                 "X-Accel-Buffering": "no"},
+    )
 
 
 # 捕获所有 HTTP 方法的所有路径
