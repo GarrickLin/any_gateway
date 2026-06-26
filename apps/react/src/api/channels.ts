@@ -10,6 +10,9 @@ export interface Channel {
   enabled: boolean
   models: string | null
   model_mapping: string | null
+  proxy_url: string | null
+  disable_ssl: boolean
+  disable_compression: boolean
   created_at: string
 }
 
@@ -22,6 +25,9 @@ export interface ChannelCreate {
   enabled?: boolean
   models?: string | null
   model_mapping?: string | null
+  proxy_url?: string | null
+  disable_ssl?: boolean
+  disable_compression?: boolean
 }
 
 export const getChannels = (params?: Record<string, unknown>) =>

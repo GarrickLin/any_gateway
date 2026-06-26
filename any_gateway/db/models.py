@@ -92,6 +92,12 @@ class ChannelBase(SQLModel):
     model_mapping: str | None = (
         None  # JSON string, e.g. '{"gpt-4o": "claude-opus-4-5"}'
     )
+    # 渠道级网络/兼容性选项（均有默认值，向后兼容）
+    proxy_url: str | None = None  # 该渠道单独走 HTTP 代理，如 http://127.0.0.1:7890
+    disable_ssl: bool = Field(default=False)  # 跳过该渠道上游 SSL 证书校验
+    disable_compression: bool = Field(
+        default=False
+    )  # 强制 accept-encoding=identity，兼容「压缩却不回传 Content-Encoding」的非标准上游
 
 
 class Channel(ChannelBase, table=True):
@@ -113,6 +119,9 @@ class ChannelUpdate(SQLModel):
     enabled: bool | None = None
     models: str | None = None
     model_mapping: str | None = None
+    proxy_url: str | None = None
+    disable_ssl: bool | None = None
+    disable_compression: bool | None = None
 
 
 # =======================

@@ -123,7 +123,7 @@ const Channels: React.FC = () => {
     setEditingChannel(null)
     setMappings([])
     form.resetFields()
-    form.setFieldsValue({ weight: 1, enabled: true, provider: 'openai' })
+    form.setFieldsValue({ weight: 1, enabled: true, provider: 'openai', disable_ssl: false, disable_compression: false })
     setDrawerVisible(true)
   }
 
@@ -138,6 +138,9 @@ const Channels: React.FC = () => {
       api_key: '',
       weight: channel.weight,
       enabled: channel.enabled,
+      proxy_url: channel.proxy_url ?? '',
+      disable_ssl: channel.disable_ssl ?? false,
+      disable_compression: channel.disable_compression ?? false,
     })
     setDrawerVisible(true)
   }
@@ -168,6 +171,9 @@ const Channels: React.FC = () => {
       })
       const model_mapping = JSON.stringify(mappingObj)
 
+      // proxy_url 空串归一为 null（表示不配置渠道级代理）
+      const proxy_url = (values.proxy_url || '').trim() || null
+
       if (editingChannel) {
         const payload: Record<string, unknown> = {
           name: values.name,
@@ -176,6 +182,9 @@ const Channels: React.FC = () => {
           weight: values.weight,
           enabled: values.enabled,
           model_mapping,
+          proxy_url,
+          disable_ssl: !!values.disable_ssl,
+          disable_compression: !!values.disable_compression,
         }
         // 仅当用户填写了新 API Key 才更新
         if (values.api_key) {
@@ -192,6 +201,9 @@ const Channels: React.FC = () => {
           weight: values.weight,
           enabled: values.enabled,
           model_mapping,
+          proxy_url,
+          disable_ssl: !!values.disable_ssl,
+          disable_compression: !!values.disable_compression,
         })
         Message.success('Channel 创建成功')
       }
@@ -522,6 +534,37 @@ const Channels: React.FC = () => {
             </Col>
             <Col span={12}>
               <FormItem label="启用" field="enabled" triggerPropName="checked">
+                <Switch />
+              </FormItem>
+            </Col>
+          </Row>
+
+          <FormItem
+            label="代理地址 (Proxy URL)"
+            field="proxy_url"
+            extra="留空则不走渠道级代理；填写后该渠道请求强制经此代理，如 http://127.0.0.1:7890"
+          >
+            <Input placeholder="http://127.0.0.1:7890（可选）" allowClear />
+          </FormItem>
+
+          <Row gutter={16}>
+            <Col span={12}>
+              <FormItem
+                label="禁用 SSL 校验"
+                field="disable_ssl"
+                triggerPropName="checked"
+                extra="跳过该渠道上游证书校验"
+              >
+                <Switch />
+              </FormItem>
+            </Col>
+            <Col span={12}>
+              <FormItem
+                label="禁用压缩"
+                field="disable_compression"
+                triggerPropName="checked"
+                extra="兼容压缩却不回传 Content-Encoding 的上游，开启后强制 identity"
+              >
                 <Switch />
               </FormItem>
             </Col>

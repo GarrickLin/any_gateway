@@ -49,6 +49,26 @@ async def init_db():
             except Exception:
                 pass
 
+    # channels 表的渠道级网络/兼容性选项（幂等自动加列，免手动迁移）。
+    # 每列单独事务：避免某条因列已存在而失败时，在 PostgreSQL 上污染同一事务。
+    _bool_col = (
+        "BOOLEAN NOT NULL DEFAULT false"
+        if engine.dialect.name == "postgresql"
+        else "BOOLEAN NOT NULL DEFAULT 0"
+    )
+    for col_name, col_type in [
+        ("proxy_url", "VARCHAR"),
+        ("disable_ssl", _bool_col),
+        ("disable_compression", _bool_col),
+    ]:
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(
+                    f"ALTER TABLE channels ADD COLUMN {col_name} {col_type}"
+                ))
+        except Exception:
+            pass
+
     # 确保 default 分组存在（幂等）
     from db.models import UserGroup
     async with AsyncSession(engine, expire_on_commit=False) as session:

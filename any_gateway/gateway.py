@@ -233,7 +233,7 @@ async def find_backend_for_model(
     model_name: str,
     username: str | None = None,
     group_id: str | None = None,
-) -> Optional[Dict[str, str]]:
+) -> Optional[Dict[str, Any]]:
     """
     根据模型名称查找后端渠道。
 
@@ -245,7 +245,7 @@ async def find_backend_for_model(
     """
     from db.models import UserGroup, GroupChannel
 
-    def _extract_model_info(channel: Channel, req_model: str) -> Optional[Dict[str, str]]:
+    def _extract_model_info(channel: Channel, req_model: str) -> Optional[Dict[str, Any]]:
         """从 Channel 对象提取模型路由信息，不支持时返回 None。"""
         channel_models: list = []
         if channel.models:
@@ -278,7 +278,15 @@ async def find_backend_for_model(
             return None
 
         upstream_model = model_mapping.get(req_model, req_model)
-        return {"base_url": channel.base_url, "api_key": channel.api_key, "model": upstream_model, "provider": channel.provider or ""}
+        return {
+            "base_url": channel.base_url,
+            "api_key": channel.api_key,
+            "model": upstream_model,
+            "provider": channel.provider or "",
+            "proxy_url": channel.proxy_url,
+            "disable_ssl": bool(channel.disable_ssl),
+            "disable_compression": bool(channel.disable_compression),
+        }
 
     def _weighted_choice(channels: list) -> Optional[Channel]:
         """按 weight 加权随机选取渠道。"""
@@ -293,7 +301,7 @@ async def find_backend_for_model(
                 return c
         return channels[-1]
 
-    def _pick(supported: list) -> Optional[Dict[str, str]]:
+    def _pick(supported: list) -> Optional[Dict[str, Any]]:
         """从候选渠道列表中加权随机选取，返回路由信息。"""
         chosen = _weighted_choice(supported)
         return _extract_model_info(chosen, model_name)
@@ -625,6 +633,24 @@ def _parse_gemini_usage(chunks: list[str]) -> StreamUsage:
     return result
 
 
+def _httpx_client_kwargs(
+    timeout, *, disable_ssl: bool = False, proxy_url: Optional[str] = None
+) -> dict:
+    """统一构造 httpx.AsyncClient 关键字参数：渠道级 disable_ssl 与全局 SKIP_SSL_VERIFY 取或，proxy_url 非空时启用代理。"""
+    kwargs: dict = {"timeout": timeout, "verify": not (SKIP_SSL_VERIFY or disable_ssl)}
+    if proxy_url:
+        kwargs["proxy"] = proxy_url
+    return kwargs
+
+
+def _apply_accept_encoding(headers: dict, disable_compression: bool) -> None:
+    """渠道级压缩控制：disable_compression 时强制 identity（兼容压缩却不回传 Content-Encoding 的上游）；否则交给 httpx 自行协商（合规上游会回传 Content-Encoding，可正常解压）。"""
+    if disable_compression:
+        headers["accept-encoding"] = "identity"
+    else:
+        headers.pop("accept-encoding", None)
+
+
 async def forward_streaming_request(
     request: Request,
     path: str,
@@ -636,6 +662,10 @@ async def forward_streaming_request(
     start_time: float,
     request_id: str,
     provider: str = "",
+    *,
+    proxy_url: Optional[str] = None,
+    disable_ssl: bool = False,
+    disable_compression: bool = False,
 ) -> StreamingResponse:
     """
     转发流式请求到后端服务并返回 SSE 流式响应。
@@ -651,7 +681,9 @@ async def forward_streaming_request(
         nonlocal response_status, response_headers, error_message
 
         try:
-            async with httpx.AsyncClient(timeout=TIMEOUT_BOUND, verify=not SKIP_SSL_VERIFY) as client:
+            async with httpx.AsyncClient(
+                **_httpx_client_kwargs(TIMEOUT_BOUND, disable_ssl=disable_ssl, proxy_url=proxy_url)
+            ) as client:
                 async with client.stream(
                     method=request.method,
                     url=url,
@@ -777,7 +809,8 @@ async def forward_streaming_request(
 
 
 async def forward_request(
-    request: Request, path: str, backend_url: str, api_key: Optional[str] = None, provider: str = ""
+    request: Request, path: str, backend_url: str, api_key: Optional[str] = None, provider: str = "",
+    *, proxy_url: Optional[str] = None, disable_ssl: bool = False, disable_compression: bool = False,
 ) -> Response:
     """
     转发请求到后端服务并返回响应。
@@ -802,6 +835,11 @@ async def forward_request(
     headers = dict(request.headers)
     headers.pop("host", None)
     headers.pop("content-length", None)
+    # 渠道级压缩控制：作为反向代理，网关需读取/解析响应体（SSE 计费）。
+    # 部分上游（如 APISIX）在 Accept-Encoding 含 br/zstd 时会压缩响应却不回传
+    # Content-Encoding 头，导致 httpx 无法自动解压、响应流乱码且无法计费——
+    # 对这类渠道在配置中开启 disable_compression 即强制 identity。
+    _apply_accept_encoding(headers, disable_compression)
 
     # 透明代理：保留客户端原始认证头的 key，仅替换 value 为渠道配置的 api_key
     if api_key:
@@ -841,10 +879,13 @@ async def forward_request(
         return await forward_streaming_request(
             request, path, url, headers, body, backend_url, model_name, start_time,
             request_id, provider,
+            proxy_url=proxy_url, disable_ssl=disable_ssl, disable_compression=disable_compression,
         )
 
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT_BOUND, verify=not SKIP_SSL_VERIFY) as client:
+        async with httpx.AsyncClient(
+            **_httpx_client_kwargs(TIMEOUT_BOUND, disable_ssl=disable_ssl, proxy_url=proxy_url)
+        ) as client:
             # 转发请求到后端
             response = await client.request(
                 method=request.method,
@@ -1445,27 +1486,37 @@ async def responses_endpoint(request: Request):
     api_key = backend_info["api_key"]
     chat_body["model"] = backend_info["model"]
     provider = backend_info.get("provider", "")
+    ch_opts = {
+        "proxy_url": backend_info.get("proxy_url"),
+        "disable_ssl": bool(backend_info.get("disable_ssl", False)),
+        "disable_compression": bool(backend_info.get("disable_compression", False)),
+    }
 
     is_stream = bool(body.get("stream"))
     if is_stream:
         return await _forward_responses_stream(
-            request, chat_body, backend_url, api_key, provider, original_model)
+            request, chat_body, backend_url, api_key, provider, original_model, **ch_opts)
     return await _forward_responses_nonstream(
-        request, chat_body, backend_url, api_key, provider, original_model)
+        request, chat_body, backend_url, api_key, provider, original_model, **ch_opts)
 
 
 async def _forward_responses_nonstream(
     request: Request, chat_body: dict, backend_url: str, api_key: str,
     provider: str, display_model: str | None,
+    *, proxy_url: Optional[str] = None, disable_ssl: bool = False,
+    disable_compression: bool = False,
 ) -> Response:
     """非流式：调上游 chat completions，转换响应为 Responses。"""
     start_time = time.time()
     request_id = uuid4().hex
     url = urljoin(backend_url.rstrip("/") + "/", "chat/completions")
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    _apply_accept_encoding(headers, disable_compression)
     content = json.dumps(chat_body).encode("utf-8")
 
-    async with httpx.AsyncClient(timeout=TIMEOUT_BOUND, verify=not SKIP_SSL_VERIFY) as client:
+    async with httpx.AsyncClient(
+        **_httpx_client_kwargs(TIMEOUT_BOUND, disable_ssl=disable_ssl, proxy_url=proxy_url)
+    ) as client:
         resp = await client.request("POST", url, content=content, headers=headers)
         resp_bytes = resp.content
 
@@ -1501,6 +1552,8 @@ async def _forward_responses_nonstream(
 async def _forward_responses_stream(
     request: Request, chat_body: dict, backend_url: str, api_key: str,
     provider: str, display_model: str | None,
+    *, proxy_url: Optional[str] = None, disable_ssl: bool = False,
+    disable_compression: bool = False,
 ) -> StreamingResponse:
     """流式：上游 chat SSE → 实时转 Responses 事件。计费用原始 chat chunks。"""
     start_time = time.time()
@@ -1508,6 +1561,7 @@ async def _forward_responses_stream(
     url = urljoin(backend_url.rstrip("/") + "/", "chat/completions")
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json",
                "Accept": "text/event-stream"}
+    _apply_accept_encoding(headers, disable_compression)
     content = json.dumps(chat_body).encode("utf-8")
 
     raw_chunks: list[str] = []  # 原始 chat 行，给计费/日志
@@ -1522,7 +1576,9 @@ async def _forward_responses_stream(
             created=int(start_time),
         )
         try:
-            async with httpx.AsyncClient(timeout=TIMEOUT_BOUND, verify=not SKIP_SSL_VERIFY) as client:
+            async with httpx.AsyncClient(
+                **_httpx_client_kwargs(TIMEOUT_BOUND, disable_ssl=disable_ssl, proxy_url=proxy_url)
+            ) as client:
                 async with client.stream("POST", url, content=content, headers=headers) as response:
                     response_status = response.status_code
                     if response_status != 200:
@@ -1640,6 +1696,9 @@ async def gateway(request: Request, path: str):
                 backend_info["model"],
                 backend_info.get("provider", ""),
             )
+            ch_proxy_url = backend_info.get("proxy_url")
+            ch_disable_ssl = bool(backend_info.get("disable_ssl", False))
+            ch_disable_compression = bool(backend_info.get("disable_compression", False))
             logger.info(f"Found backend for model {backend_info}")
             body["model"] = model_name
         else:
@@ -1664,7 +1723,11 @@ async def gateway(request: Request, path: str):
 
     new_request = RequestWithBody(request.scope, request.receive)
 
-    return await forward_request(new_request, path, backend_url, api_key, backend_provider)
+    return await forward_request(
+        new_request, path, backend_url, api_key, backend_provider,
+        proxy_url=ch_proxy_url, disable_ssl=ch_disable_ssl,
+        disable_compression=ch_disable_compression,
+    )
 
 
 # --------------------------------------------------------------------------- #
