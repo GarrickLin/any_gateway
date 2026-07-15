@@ -6,13 +6,21 @@
 """
 from __future__ import annotations
 
+import asyncio
+
 from sqlalchemy import case, update as sa_update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastcrud import FastCRUD
 from loguru import logger
 
 from db.database import engine
 from db.models import Token, UsageLog, User
+
+# update_usage 落库重试：瞬时 DB 错误（连接抖动/锁超时）指数退避重试，
+# 尽量保证计费记录不因偶发故障而丢失。
+_USAGE_MAX_RETRIES = 3
+_USAGE_RETRY_BASE_DELAY = 0.2  # 秒；退避 0.2 / 0.4 / 0.8
 
 
 def check_quota(quota_usd: float, used_usd: float) -> bool:
@@ -49,42 +57,64 @@ async def update_usage(
     2. 插入一条 UsageLog 记录
 
     此函数应通过 asyncio.create_task() 以 fire-and-forget 方式调用，
-    内部捕获所有异常，确保用量更新失败不会影响正常请求。
+    与写会话日志文件互相独立、并发执行、互不影响。
+    内部捕获所有异常并对瞬时故障重试，尽量保证用量记录不丢失；
+    最终仍失败也只记日志，不影响正常请求。
 
-    TODO: 实现真实的价格计算（目前 cost_usd 始终为 0）
+    幂等性：两步在同一事务内单次 commit，要么全成功要么全回滚。
+    传入 request_id 时用作 UsageLog 主键，重复调用会触发 IntegrityError
+    并整体回滚（不会重复计费），据此视为「已落库」幂等返回。
     """
-    try:
-        async with AsyncSession(engine, expire_on_commit=False) as session:
-            # 1. 原子递增 Token.used_usd（SQL 级 UPDATE，避免 read-modify-write 竞态）
-            if token_id:
-                stmt = sa_update(Token).where(Token.id == token_id).values(
-                    used_usd=Token.used_usd + cost_usd
+    for attempt in range(1, _USAGE_MAX_RETRIES + 1):
+        try:
+            async with AsyncSession(engine, expire_on_commit=False) as session:
+                # 1. 原子递增 Token.used_usd（SQL 级 UPDATE，避免 read-modify-write 竞态）
+                if token_id:
+                    stmt = sa_update(Token).where(Token.id == token_id).values(
+                        used_usd=Token.used_usd + cost_usd
+                    )
+                    await session.execute(stmt)
+
+                # 2. 插入 UsageLog 记录
+                log = UsageLog(
+                    **({"id": request_id} if request_id is not None else {}),
+                    token_id=token_id,
+                    channel_id=channel_id,
+                    model=model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cache_read_tokens=cache_read_tokens,
+                    cache_creation_tokens=cache_creation_tokens,
+                    cost_usd=cost_usd,
+                    duration_ms=duration_ms,
+                    status=status,
+                    is_stream=is_stream,
+                    username=username,
+                    covered_by_package=covered_by_package,
                 )
-                await session.execute(stmt)
+                session.add(log)
+                await session.commit()
+            return  # 成功
 
-            # 2. 插入 UsageLog 记录
-            log = UsageLog(
-                **({"id": request_id} if request_id is not None else {}),
-                token_id=token_id,
-                channel_id=channel_id,
-                model=model,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cache_read_tokens=cache_read_tokens,
-                cache_creation_tokens=cache_creation_tokens,
-                cost_usd=cost_usd,
-                duration_ms=duration_ms,
-                status=status,
-                is_stream=is_stream,
-                username=username,
-                covered_by_package=covered_by_package,
+        except IntegrityError:
+            # request_id 主键重复：此前已成功落库（重放/重试），幂等返回，不重复计费。
+            logger.info(f"update_usage 记录已存在，视为成功 (request_id={request_id})")
+            return
+
+        except Exception as exc:  # pylint: disable=broad-except
+            if attempt >= _USAGE_MAX_RETRIES:
+                # 用量记录最终失败不应影响请求结果，仅记录错误日志
+                logger.exception(
+                    f"update_usage 最终失败(已重试{_USAGE_MAX_RETRIES}次) "
+                    f"token_id={token_id} request_id={request_id}"
+                )
+                return
+            delay = _USAGE_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+            logger.warning(
+                f"update_usage 第{attempt}次失败，{delay:.1f}s 后重试 "
+                f"(request_id={request_id}): {exc}"
             )
-            session.add(log)
-            await session.commit()
-
-    except Exception as exc:  # pylint: disable=broad-except
-        # 用量记录失败不应影响请求结果，仅记录错误日志
-        logger.exception(f"update_usage 失败 (token_id={token_id})")
+            await asyncio.sleep(delay)
 
 
 def check_request_limit(current_count: int, limit: float) -> bool:

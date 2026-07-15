@@ -358,3 +358,135 @@ def test_update_user_balance_skips_quota_deduction_when_none():
         assert abs(user.used_usd - 2.5) < 1e-9
 
     asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# update_usage 落库重试
+# ---------------------------------------------------------------------------
+
+def test_update_usage_retries_transient_errors():
+    """commit 瞬时失败应指数退避重试，最终成功。"""
+    from unittest.mock import patch
+    import services.quota as q
+
+    class _FlakySession:
+        calls = 0
+
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def execute(self, *a, **k):
+            return None
+
+        def add(self, *a, **k):
+            pass
+
+        async def commit(self):
+            _FlakySession.calls += 1
+            if _FlakySession.calls < 3:
+                raise RuntimeError("transient DB error")
+
+    async def _nosleep(*a, **k):
+        return None
+
+    async def _run():
+        with patch.object(q, "AsyncSession", _FlakySession), \
+             patch.object(q.asyncio, "sleep", _nosleep):
+            await q.update_usage(
+                token_id=None, channel_id=None, model="m",
+                input_tokens=1, output_tokens=1, cost_usd=0.0,
+                duration_ms=1.0, status=200, is_stream=False, request_id=None,
+            )
+        assert _FlakySession.calls == 3  # 失败 2 次 + 成功 1 次
+
+    asyncio.run(_run())
+
+
+def test_update_usage_idempotent_on_duplicate_request_id():
+    """request_id 主键重复(IntegrityError)应幂等返回，不重试。"""
+    from unittest.mock import patch
+    from sqlalchemy.exc import IntegrityError
+    import services.quota as q
+
+    class _DupSession:
+        calls = 0
+
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def execute(self, *a, **k):
+            return None
+
+        def add(self, *a, **k):
+            pass
+
+        async def commit(self):
+            _DupSession.calls += 1
+            raise IntegrityError("duplicate", None, Exception("dup"))
+
+    async def _run():
+        with patch.object(q, "AsyncSession", _DupSession):
+            await q.update_usage(
+                token_id=None, channel_id=None, model="m",
+                input_tokens=1, output_tokens=1, cost_usd=0.0,
+                duration_ms=1.0, status=200, is_stream=False, request_id="dup-id",
+            )
+        assert _DupSession.calls == 1  # 命中重复即返回，不重试
+
+    asyncio.run(_run())
+
+
+def test_update_usage_gives_up_after_max_retries():
+    """持续失败应在 _USAGE_MAX_RETRIES 次后放弃(不抛出)。"""
+    from unittest.mock import patch
+    import services.quota as q
+
+    class _DeadSession:
+        calls = 0
+
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def execute(self, *a, **k):
+            return None
+
+        def add(self, *a, **k):
+            pass
+
+        async def commit(self):
+            _DeadSession.calls += 1
+            raise RuntimeError("permanent DB error")
+
+    async def _nosleep(*a, **k):
+        return None
+
+    async def _run():
+        with patch.object(q, "AsyncSession", _DeadSession), \
+             patch.object(q.asyncio, "sleep", _nosleep):
+            # 不应抛出
+            await q.update_usage(
+                token_id=None, channel_id=None, model="m",
+                input_tokens=1, output_tokens=1, cost_usd=0.0,
+                duration_ms=1.0, status=200, is_stream=False, request_id=None,
+            )
+        assert _DeadSession.calls == q._USAGE_MAX_RETRIES
+
+    asyncio.run(_run())
