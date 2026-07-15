@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 from typing import Optional
@@ -13,6 +14,7 @@ from starlette.requests import Request
 
 from db.database import engine
 from db.models import Token, User
+from log_writer import enqueue_rejection_log
 
 # 导出供测试 patch
 from services.rate_limit_redis import get_window_count, get_window_sum  # noqa: F401
@@ -152,22 +154,33 @@ class AuthMiddleware(BaseHTTPMiddleware):
             if api_key:
                 token, error_msg, status_code = await self._validate_key(api_key)
                 if token is None:
+                    await enqueue_rejection_log(request, status=status_code, error=error_msg)
                     return JSONResponse({"error": error_msg}, status_code=status_code)
                 self._inject_token_state(request, token)
             return await call_next(request)
 
         key = self._extract_key(request.headers)
         if not key:
+            await enqueue_rejection_log(request, status=401, error="missing api key")
             return JSONResponse({"error": "missing api key"}, status_code=401)
 
         token, error_msg, status_code = await self._validate_key(key)
         if token is None:
+            await enqueue_rejection_log(request, status=status_code, error=error_msg)
             return JSONResponse({"error": error_msg}, status_code=status_code)
+
+        self._inject_token_state(request, token)
 
         # 限流检查（Before 阶段）
         limit_response = await self._check_limits(request, token)
         if limit_response is not None:
+            try:
+                _err = json.loads(bytes(limit_response.body)).get("error", "rate limited")
+            except Exception:
+                _err = "rate limited"
+            await enqueue_rejection_log(
+                request, status=limit_response.status_code, error=str(_err)
+            )
             return limit_response
 
-        self._inject_token_state(request, token)
         return await call_next(request)

@@ -7,10 +7,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from constants import (
     GATEWAY_PORT,
-    MAX_QUEUE_SIZE,
     CONFIG_FILE,
     TIMEOUT_BOUND,
-    NUM_LOG_CONSUMERS,
     SKIP_SSL_VERIFY,
 )
 from loguru import logger
@@ -62,22 +60,11 @@ async def lifespan(app: FastAPI):
     except Exception as _e:
         logger.error(f"超级管理员初始化失败，应用继续启动: {_e}")
 
-    # 初始化日志队列
-    log_writer.log_queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
-    logger.info("日志队列已初始化")
-
     logger.info(f"SKIP_SSL_VERIFY={SKIP_SSL_VERIFY}（跳过上游 SSL 证书验证）")
 
-    # 启动多个后台日志消费者任务
-    consumer_tasks = []
-    for i in range(NUM_LOG_CONSUMERS):
-        task = asyncio.create_task(log_writer.log_consumer())
-        consumer_tasks.append(task)
-        logger.info(f"日志消费者任务 {i+1}/{NUM_LOG_CONSUMERS} 已启动")
-
-    # 保存所有日志任务的引用,防止被垃圾回收
+    # 日志写入无后台队列/consumer：每条日志由请求处理协程 create_task 直写，
+    # 这里只保存在途写入任务的引用，防止被 GC，并在关闭时等待其完成。
     app.state.log_tasks = set()
-    app.state.consumer_tasks = consumer_tasks  # 保存消费者任务引用
 
     try:
         yield  # 应用运行中
@@ -85,51 +72,18 @@ async def lifespan(app: FastAPI):
         # 关闭时清理资源
         logger.info("正在关闭应用...")
 
-        # 等待所有日志入队任务完成
+        # 等待所有在途日志写入任务完成（放宽到 30s，尽量不丢）
         if app.state.log_tasks:
-            logger.info(f"等待 {len(app.state.log_tasks)} 个日志任务完成...")
-            done, pending = await asyncio.wait(app.state.log_tasks, timeout=5.0)
+            logger.info(f"等待 {len(app.state.log_tasks)} 个在途日志任务完成...")
+            done, pending = await asyncio.wait(app.state.log_tasks, timeout=30.0)
             if pending:
                 logger.warning(f"仍有 {len(pending)} 个日志任务未完成,强制取消")
                 for task in pending:
                     task.cancel()
-
-        if log_writer.log_queue is not None:
-            try:
-                # 等待队列中的所有任务处理完成
-                await asyncio.wait_for(log_writer.log_queue.join(), timeout=5.0)
-                logger.info("队列中的所有日志已处理完成")
-
-                # 向每个消费者发送关闭信号
-                logger.info(f"正在发送关闭信号到 {len(consumer_tasks)} 个消费者...")
-                for i in range(len(consumer_tasks)):
-                    await asyncio.wait_for(log_writer.log_queue.put(None), timeout=1.0)
-
-                # 等待所有消费者任务完成
-                done, pending = await asyncio.wait(consumer_tasks, timeout=5.0)
-                logger.info(f"{len(done)}/{len(consumer_tasks)} 个消费者已正常退出")
-
-                if pending:
-                    logger.warning(f"仍有 {len(pending)} 个消费者未退出,强制取消")
-                    for task in pending:
-                        task.cancel()
-                    try:
-                        await asyncio.wait(pending, timeout=2.0)
-                    except Exception:
-                        pass
-
-            except asyncio.TimeoutError:
-                logger.warning("日志消费者关闭超时,强制取消所有任务")
-                for task in consumer_tasks:
-                    task.cancel()
                 try:
-                    await asyncio.gather(*consumer_tasks, return_exceptions=True)
+                    await asyncio.gather(*pending, return_exceptions=True)
                 except Exception:
                     pass
-            except Exception as e:
-                logger.error(f"关闭日志消费者时出错: {e}")
-                for task in consumer_tasks:
-                    task.cancel()
 
         logger.info("应用已关闭")
 
@@ -974,20 +928,27 @@ async def forward_request(
             task.add_done_callback(app.state.log_tasks.discard)
             logger.info(f"当前task数量: {len(app.state.log_tasks)}")
 
-            # fire-and-forget 更新用量（不阻塞响应）
+            # After 阶段：计算成本并异步更新用量。
+            # 必须与已成功的转发解耦：即使计费计算失败也不能抛出，
+            # 否则会跳到下方 except 分支、用同一 request_id 再入队一条错误日志，
+            # 覆盖上面刚写入的成功日志（write-once 按 request_id 覆盖）。
             _group_id = getattr(request.state, "token_group_id", None)
-            _multiplier = await _get_group_multiplier(_group_id)
-            async with AsyncSession(engine, expire_on_commit=False) as _ps:
-                _cost_usd = await calculate_cost(
-                    session=_ps,
-                    group_id=_group_id,
-                    model=model_name,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cache_read_tokens=cache_read_tokens,
-                    cache_creation_tokens=cache_creation_tokens,
-                    multiplier=_multiplier,
-                )
+            _cost_usd = 0.0
+            try:
+                _multiplier = await _get_group_multiplier(_group_id)
+                async with AsyncSession(engine, expire_on_commit=False) as _ps:
+                    _cost_usd = await calculate_cost(
+                        session=_ps,
+                        group_id=_group_id,
+                        model=model_name,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        cache_read_tokens=cache_read_tokens,
+                        cache_creation_tokens=cache_creation_tokens,
+                        multiplier=_multiplier,
+                    )
+            except Exception as _cost_err:
+                logger.error(f"计费计算失败，成本记为 0（不影响已成功的转发）: {_cost_err}")
             usage_task = asyncio.create_task(
                 update_usage(
                     token_id=getattr(request.state, "token_id", None),
@@ -1454,6 +1415,8 @@ async def responses_endpoint(request: Request):
     quota_usd = getattr(request.state, "quota_usd", 0)
     used_usd = getattr(request.state, "used_usd", 0)
     if not check_quota(quota_usd=quota_usd, used_usd=used_usd):
+        await log_writer.enqueue_rejection_log(
+            request, status=402, error="Token quota exceeded")
         return JSONResponse(
             content={"error": {"type": "quota_exceeded", "message": "Token quota exceeded"}},
             status_code=402,
@@ -1463,10 +1426,15 @@ async def responses_endpoint(request: Request):
     try:
         body = await request.json()
     except (json.JSONDecodeError, ValueError):
+        await log_writer.enqueue_rejection_log(
+            request, status=400, error="invalid JSON body")
         return JSONResponse(content={"error": "invalid JSON body"}, status_code=400)
 
     original_model = body.get("model")
     if not original_model:
+        await log_writer.enqueue_rejection_log(
+            request, status=400, error="No model name provided",
+            request_body=json.dumps(body, ensure_ascii=False))
         return JSONResponse(content={"error": "No model name provided"}, status_code=400)
 
     chat_body = responses_to_chat_request(body)
@@ -1478,8 +1446,15 @@ async def responses_endpoint(request: Request):
         group_id=getattr(request.state, "token_group_id", None),
     )
     if not backend_info:
+        _rb = json.dumps(body, ensure_ascii=False)
         if not getattr(request.state, "token_username", None):
+            await log_writer.enqueue_rejection_log(
+                request, status=401, error="anonymous token is not allowed",
+                model_name=original_model, request_body=_rb)
             return JSONResponse(content={"error": "anonymous token is not allowed"}, status_code=401)
+        await log_writer.enqueue_rejection_log(
+            request, status=400, error="no available channel for this model",
+            model_name=original_model, request_body=_rb)
         return JSONResponse(content={"error": "no available channel for this model"}, status_code=400)
 
     backend_url = backend_info["base_url"]
@@ -1669,6 +1644,8 @@ async def gateway(request: Request, path: str):
             f"Token {getattr(request.state, 'token_id', None)} 额度已超出: "
             f"used={used_usd}, quota={quota_usd}"
         )
+        await log_writer.enqueue_rejection_log(
+            request, status=402, error="Token quota exceeded")
         return JSONResponse(
             content={"error": {"type": "quota_exceeded", "message": "Token quota exceeded"}},
             status_code=402,
@@ -1703,15 +1680,25 @@ async def gateway(request: Request, path: str):
             body["model"] = model_name
         else:
             token_username = getattr(request.state, "token_username", None)
+            _rb = json.dumps(body, ensure_ascii=False)
             if not token_username:
+                await log_writer.enqueue_rejection_log(
+                    request, status=401, error="anonymous token is not allowed",
+                    model_name=model_name, request_body=_rb)
                 return JSONResponse(
                     content={"error": "anonymous token is not allowed"}, status_code=401
                 )
+            await log_writer.enqueue_rejection_log(
+                request, status=400, error="no available channel for this model",
+                model_name=model_name, request_body=_rb)
             return JSONResponse(
                 content={"error": "no available channel for this model"}, status_code=400
             )
 
     else:
+        await log_writer.enqueue_rejection_log(
+            request, status=400, error="No model name provided",
+            request_body=json.dumps(body, ensure_ascii=False))
         return JSONResponse(
             content={"error": "No model name provided"}, status_code=400
         )

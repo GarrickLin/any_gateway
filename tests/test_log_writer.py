@@ -60,24 +60,115 @@ def test_load_day_logs_reads_all_requests():
         assert logs[1]["request_id"] == "req2"
 
 
-def test_log_consumer_skips_missing_fields():
-    """log_consumer 遇到缺少 request_id 或 timestamp 的日志应跳过，不写文件"""
-    import tempfile
+def test_enqueue_log_skips_missing_fields():
+    """enqueue_log 遇到缺少 request_id 或 timestamp 的日志应跳过，不写文件"""
     from unittest.mock import patch
 
     async def _run():
         import log_writer
-        log_writer.log_queue = asyncio.Queue()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("log_writer.LOG_BASE_DIR", Path(tmpdir)):
+                # 缺 request_id
+                await log_writer.enqueue_log({"timestamp": "2026-03-07T10:00:00Z"})
+                assert list(Path(tmpdir).rglob("*.json.br")) == []
 
-        # 入队一条缺少 request_id 的日志
-        await log_writer.log_queue.put({"timestamp": "2026-03-07T10:00:00Z"})
-        # 入队关闭信号
-        await log_writer.log_queue.put(None)
+    asyncio.run(_run())
+
+
+def test_enqueue_log_writes_file_directly():
+    """enqueue_log 是协程直写：无需队列/consumer，调用即落盘。"""
+    from unittest.mock import patch
+
+    async def _run():
+        import log_writer
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("log_writer.LOG_BASE_DIR", Path(tmpdir)):
+                await log_writer.enqueue_log(
+                    {"timestamp": "2026-03-07T10:00:00Z", "request_id": "rX", "model_name": "m"}
+                )
+                files = list(Path(tmpdir).rglob("*.json.br"))
+                assert [p.name for p in files] == ["rX.json.br"]
+
+    asyncio.run(_run())
+
+
+def test_enqueue_log_drops_when_inflight_at_cap():
+    """在途写入达到 MAX_INFLIGHT 时应丢弃本条（过载保护），不写文件。"""
+    from unittest.mock import patch
+
+    async def _run():
+        import log_writer
+        orig = log_writer._inflight
+        log_writer._inflight = log_writer.MAX_INFLIGHT  # 模拟已达上限
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with patch("log_writer.LOG_BASE_DIR", Path(tmpdir)):
+                    await log_writer.enqueue_log(
+                        {"timestamp": "2026-03-07T10:00:00Z", "request_id": "r1"}
+                    )
+                    assert list(Path(tmpdir).rglob("*.json.br")) == []
+        finally:
+            log_writer._inflight = orig
+
+    asyncio.run(_run())
+
+
+class _FakeState:
+    token_id = 7
+
+
+class _FakeApp:
+    class state:
+        log_tasks = set()
+
+
+class _FakeURL:
+    path = "/v1/chat/completions"
+
+    def __str__(self):
+        return "http://gw/v1/chat/completions?beta=true"
+
+
+class _FakeRequest:
+    """最小化的 Request 替身，仅提供 enqueue_rejection_log 用到的属性。"""
+    method = "POST"
+    url = _FakeURL()
+    headers = {"authorization": "Bearer sk-x", "host": "gw", "content-length": "3"}
+    state = _FakeState()
+    app = _FakeApp()
+
+
+def test_enqueue_rejection_log_writes_wellformed_entry():
+    """被拒绝的请求应落盘一条与转发日志同构的记录。"""
+    from unittest.mock import patch
+
+    async def _run():
+        import log_writer
+        req = _FakeRequest()
+        tasks = req.app.state.log_tasks
+        tasks.clear()
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch("log_writer.LOG_BASE_DIR", Path(tmpdir)):
-                await log_writer.log_consumer()
-            # 不应有文件被写入
-            assert list(Path(tmpdir).rglob("*.json.br")) == []
+                await log_writer.enqueue_rejection_log(
+                    req, status=402, error="Token quota exceeded",
+                    model_name="gpt-4o", request_body='{"model":"gpt-4o"}',
+                )
+                # helper 是 fire-and-forget（内部 create_task），等待写入任务完成
+                await asyncio.gather(*list(tasks))
+                files = list(Path(tmpdir).rglob("*.json.br"))
+                assert len(files) == 1
+                entry = json.loads(brotli.decompress(files[0].read_bytes()))
+
+        assert entry["request_id"]
+        assert entry["timestamp"].endswith("Z")
+        assert entry["response_status"] == 402
+        assert entry["model_name"] == "gpt-4o"
+        assert entry["token_id"] == 7
+        assert entry["error"] == "Token quota exceeded"
+        assert json.loads(entry["response_body"]) == {"error": "Token quota exceeded"}
+        # 代理相关头应被剔除
+        assert "host" not in entry["request_headers"]
+        assert "content-length" not in entry["request_headers"]
 
     asyncio.run(_run())
